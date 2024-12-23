@@ -2,19 +2,28 @@ import pandas as pd
 import tkinter as tk
 from tkinter import messagebox
 import tkinter.ttk as ttk
+from tkinter import scrolledtext  # For better text display
 
 # Load databases
 inventory_db_path = 'E:\\Program\\WarehouseManageSystem\\database\\database1.xlsx'
 borrow_return_db_path = 'E:\\Program\\WarehouseManageSystem\\database\\database2.xlsx'
 
+
 try:
     inventory_df = pd.read_excel(inventory_db_path, engine='openpyxl')
     borrow_return_df = pd.read_excel(borrow_return_db_path, engine='openpyxl')
+    # Ensure data types are consistent.  This prevents later errors.
+    inventory_df['数量'] = inventory_df['数量'].astype(int)
+    # Add similar type checking for other relevant columns as needed.
 except FileNotFoundError:
-    messagebox.showerror("错误", "没找到数据库，检查E盘数据是不是被删掉了.")
+    messagebox.showerror("错误", "没找到数据库，请检查文件路径是否正确。")
     exit()
-
-
+except pd.errors.EmptyDataError:
+    messagebox.showerror("错误", "数据库文件为空。")
+    exit()
+except Exception as e:
+    messagebox.showerror("错误", f"加载数据库失败: {e}")
+    exit()
 
 
 def clean_text(text):
@@ -42,7 +51,6 @@ def on_location_menu_select(event):
     selected_location = location_choice.get()
     populate_cabinet_menu(selected_location)
     cabinet_entry.delete(0, tk.END)  # Clear cabinet_entry when location changes
-    cabinet_entry.insert(0, "")
 
 def on_cabinet_menu_select(event):
     selected_cabinet = cabinet_menu.get()
@@ -61,6 +69,14 @@ def update_subcategory_options(*args):
         subcategory_menu['menu'].delete(0, 'end')
         for subcategory in subcategories:
             subcategory_menu['menu'].add_command(label=subcategory, command=tk._setit(subcategory_choice, subcategory, set_subcategory_from_dropdown))
+            
+def update_subcategory_options2(*args):
+    selected_category2 = category_entry2.get().strip()
+    if selected_category2:
+        subcategories = inventory_df[inventory_df['大类名称'] == selected_category2]['小类名称'].unique()
+        subcategory_menu2['menu'].delete(0, 'end')
+        for subcategory in subcategories:
+            subcategory_menu2['menu'].add_command(label=subcategory, command=tk._setit(subcategory_choice2, subcategory, set_subcategory_from_dropdown2))
 
 def update_cabinet_options(*args):
     selected_location = location_choice.get().strip()
@@ -78,10 +94,23 @@ def set_category_from_dropdown(*args):
 def set_subcategory_from_dropdown(*args):
     subcategory_entry.delete(0, tk.END)
     subcategory_entry.insert(0, subcategory_choice.get())
+    
+def set_category_from_dropdown2(*args):
+    category_entry2.delete(0, tk.END)
+    category_entry2.insert(0, category_choice2.get())
+    update_subcategory_options2()
+
+def set_subcategory_from_dropdown2(*args):
+    subcategory_entry2.delete(0, tk.END)
+    subcategory_entry2.insert(0, subcategory_choice2.get())
 
 def set_cabinet_from_dropdown(*args):
     cabinet_entry.delete(0, tk.END)
     cabinet_entry.insert(0, cabinet_number.get())
+    
+def set_status_from_dropdown(*args):
+    status_entry.delete(0, tk.END)
+    status_entry.insert(0, status_choice.get())
 
 def calculate_and_display_totals():
     category = category_choice.get().strip()
@@ -104,7 +133,7 @@ def calculate_and_display_totals():
     storage_locations = ", ".join(filtered_df['存放位置'].unique())
 
     # Display the result
-    result = f"大类别名字：{category} —— 小类别名字：{subcategory}   —— 仓库现有好的个数：{good_count}  —— 存放位置：{storage_locations}"
+    result = f"大类别名字：{category} —— 小类别名字：{subcategory} ——仓库现有总数：{total_count}  —— 仓库现有好的个数：{good_count}  —— 存放位置：{storage_locations}"
     messagebox.showinfo("统计结果", result)
 
 def view_inventory():
@@ -174,6 +203,7 @@ def update_databases():
         subcategory = subcategory_entry2.get()
         quantity = int(quantity_entry2.get())
         status = status_entry.get()
+        remark = remark_entry2.get()
 
         if quantity <= 0:
             raise ValueError("不要乱写负数！fk你！.")
@@ -185,14 +215,14 @@ def update_databases():
             '借出物品数量': quantity,
             '保管人员': borrower,
             '物品状态': status,
-            '备注': ''
+            '备注': remark
         }
         global borrow_return_df
         borrow_return_df = borrow_return_df.append(new_borrow_entry, ignore_index=True)
         borrow_return_df.to_excel(borrow_return_db_path, index=False, engine='openpyxl')
 
         # Update inventory database
-        inventory_index = inventory_df[(inventory_df['大类名称'] == category) & (inventory_df['小类名称'] == subcategory)].index
+        inventory_index = inventory_df[(inventory_df['大类名称'] == category) & (inventory_df['小类名称'] == subcategory) & (inventory_df['备注'] == remark)].index
 
         if not inventory_index.empty:
             if status == '借出':
@@ -213,45 +243,52 @@ def search_borrower_items():
     search_window.title(f"Items borrowed by {borrower_name}")
     text = tk.Text(search_window)
     text.pack()
-    
+
     # Filter records for the specified borrower
     borrower_records = borrow_return_df[borrow_return_df['保管人员'] == borrower_name]
-    
+
     if borrower_records.empty:
-        text.insert(tk.END, f"No records found for {borrower_name}.\n")
+        text.insert(tk.END, f"没有找到这个人： {borrower_name}.\n")
     else:
         current_count = {}
         delivered_count = {}
         damaged_count = {}
-        
+
         for index, row in borrower_records.iterrows():
+            category = row['借出物品大类名称']  # Get the category name
             subcategory = row['借出物品小类名称']
             quantity = row['借出物品数量']
             status = row['物品状态']
-            
+
+            item_key = (category, subcategory) # Use a tuple as key to store both category and subcategory
+
             if status == '借出':
-                current_count[subcategory] = current_count.get(subcategory, 0) + quantity
+                current_count[item_key] = current_count.get(item_key, 0) + quantity
             elif status == '归还':
-                current_count[subcategory] = current_count.get(subcategory, 0) - quantity
+                current_count[item_key] = current_count.get(item_key, 0) - quantity
             elif status == '交付':
-                delivered_count[subcategory] = delivered_count.get(subcategory, 0) + quantity
+                delivered_count[item_key] = delivered_count.get(item_key, 0) + quantity
             elif status == '损坏':
-                damaged_count[subcategory] = damaged_count.get(subcategory, 0) + quantity
-        
-        # Display results
-        current_items = ", ".join([f"{count} 个 {name}" for name, count in current_count.items()])
-        delivered_items = ", ".join([f"{name} 数量：{count}" for name, count in delivered_count.items()])
-        damaged_items = ", ".join([f"{name}个数：{count}" for name, count in damaged_count.items()])
-        
+                damaged_count[item_key] = damaged_count.get(item_key, 0) + quantity
+
+        # Display results.  Format output to include category.
+        def format_item(count, category, subcategory):
+            return f"{count} 个 {category}-{subcategory}"
+
+        current_items = ", ".join([format_item(count, category, subcategory) for (category, subcategory), count in current_count.items()])
+        delivered_items = ", ".join([format_item(count, category, subcategory) for (category, subcategory), count in delivered_count.items()])
+        damaged_items = ", ".join([format_item(count, category, subcategory) for (category, subcategory), count in damaged_count.items()])
+
+
         text.insert(tk.END, f"当前名下还有：{current_items}。\n")
-        text.insert(tk.END, f"交付{delivered_items}。\n")
-        text.insert(tk.END, f"损坏{damaged_items}。\n")
+        text.insert(tk.END, f"交付：{delivered_items}。\n")
+        text.insert(tk.END, f"损坏：{damaged_items}。\n")
 
 
 # GUI setup
 root = tk.Tk()
 root.title("仓库管理系统-v0.1-yhw最帅版")
-view_button = tk.Button(root, text="----------------------------------->点击按钮，守护最棒的kd大将军<----------------------------------")
+view_button = tk.Button(root, text="------------------------------------------>点击按钮，守护最棒的kd大将军<-----------------------------------------")
 view_button.pack()
 
 
@@ -259,7 +296,7 @@ view_button.pack()
 inventory_frame = tk.Frame(root)
 inventory_frame.pack(pady=10)
 
-tk.Label(inventory_frame, text="大类别名称（NX，飞控...）").grid(row=0, column=0)
+tk.Label(inventory_frame, text="大类别名称（nx，飞控,rtk...）").grid(row=0, column=0)
 category_entry = tk.Entry(inventory_frame)
 category_entry.insert(0, "") # Set default to empty string
 category_entry.grid(row=0, column=1)
@@ -286,7 +323,7 @@ quantity_entry.grid(row=2, column=1)
 
 # Location selection using dropdowns
 tk.Label(inventory_frame, text="存放位置（门号-柜子号-细分描述）").grid(row=3, column=0)
-location_choice = tk.StringVar(value="627")
+location_choice = tk.StringVar(value="教室")
 location_menu = tk.OptionMenu(inventory_frame, location_choice, "627", "629", command=update_cabinet_options)
 location_menu.grid(row=3, column=1)
 
@@ -303,7 +340,7 @@ cabinet_menu.bind("<<ComboboxSelected>>", on_cabinet_menu_select)
 
 # Description Entry
 description_entry = tk.Entry(inventory_frame)
-description_entry.grid(row=3, column=5)  # Placed to the right of description label
+description_entry.grid(row=3, column=4)  # Placed to the right of description label
 
 
 # Bind events
@@ -311,20 +348,22 @@ location_choice.trace("w", lambda *args: on_location_menu_select(None)) # Trigge
 category_entry.bind("<FocusOut>", lambda event: on_category_subcategory_select(None))
 subcategory_entry.bind("<FocusOut>", lambda event: on_category_subcategory_select(None))
 
-tk.Label(inventory_frame, text="备注(建议写上：好的，坏的，编号，便于数据库查询)").grid(row=4, column=0)
+tk.Label(inventory_frame, text="描述符(建议写上：好的，坏的，编号，便于数据库查询)").grid(row=4, column=0)
 remark_entry = tk.Entry(inventory_frame)
 remark_entry.insert(0, "")
 remark_entry.grid(row=4, column=1)
 
-add_button = tk.Button(inventory_frame, text="添加物品", command=add_inventory_item)
+add_button = tk.Button(inventory_frame, text="点击添加物品", command=add_inventory_item)
 add_button.grid(row=5, columnspan=4, pady=5)
 
 # Button to calculate and display totals
-calculate_button = tk.Button(inventory_frame, text="查找物品和数量吧~", command=calculate_and_display_totals)
-calculate_button.grid(row=6, columnspan=2, pady=5)
+calculate_button = tk.Button(inventory_frame, text="点击查找物品和数量吧~", command=calculate_and_display_totals)
+calculate_button.grid(row=5, column=3, pady=5)
 
-alert_button = tk.Button(inventory_frame, text="先出库，再入库，操作完再操作损坏或者交付!", command=calculate_and_display_totals)
-alert_button.grid(row=6, columnspan=9, pady=5)
+alert_button = tk.Button(inventory_frame, text=">>>>>先出库，再入库，操作完再操作损坏或者交付!<<<<<")
+alert_button.grid(row=6, columnspan=3, pady=5)
+alert2_button = tk.Button(inventory_frame, text=">>>>>不知道备注请看数据库或飞书表格<<<<<")
+alert2_button.grid(row=6, column=3, pady=5)
 
 # Frame for Borrow/Return Management
 borrow_return_frame = tk.Frame(root)
@@ -335,23 +374,38 @@ borrower_entry = tk.Entry(borrow_return_frame)
 borrower_entry.grid(row=0, column=1)
 
 tk.Label(borrow_return_frame, text="借还状态（借出，归还，交付，采购, 损坏）").grid(row=1, column=0)
+status_choice = tk.StringVar(value="默认")
+status_menu = tk.OptionMenu(borrow_return_frame, status_choice, "借出", "归还",'交付','采购','损坏', command=set_status_from_dropdown)
+status_menu.grid(row=1, column=2)
 status_entry = tk.Entry(borrow_return_frame)
 status_entry.grid(row=1, column=1)
+
 
 tk.Label(borrow_return_frame, text="大类别名称").grid(row=2, column=0)
 category_entry2 = tk.Entry(borrow_return_frame)
 category_entry2.grid(row=2, column=1)
+# Dropdown for subcategory
+category_choice2 = tk.StringVar()
+category_menu2 = tk.OptionMenu(borrow_return_frame, category_choice2, *inventory_df['大类名称'].unique(), command=set_category_from_dropdown2)
+category_menu2.grid(row=2, column=2)
 
 tk.Label(borrow_return_frame, text="子类别名称").grid(row=3, column=0)
 subcategory_entry2 = tk.Entry(borrow_return_frame)
 subcategory_entry2.grid(row=3, column=1)
+subcategory_choice2 = tk.StringVar()
+subcategory_menu2 = tk.OptionMenu(borrow_return_frame, subcategory_choice2, "", command=set_subcategory_from_dropdown2)
+subcategory_menu2.grid(row=3, column=2)
 
 tk.Label(borrow_return_frame, text="数量").grid(row=4, column=0)
 quantity_entry2 = tk.Entry(borrow_return_frame)
 quantity_entry2.grid(row=4, column=1)
 
+tk.Label(borrow_return_frame, text="备注（借出时的备注，好的，坏的，编号等）").grid(row=5, column=0)
+remark_entry2 = tk.Entry(borrow_return_frame)
+remark_entry2.grid(row=5, column=1)
+
 update_button = tk.Button(borrow_return_frame, text="点击更新数据库", command=update_databases)
-update_button.grid(row=5, columnspan=2, pady=5)
+update_button.grid(row=6, columnspan=2, pady=5)
 
 
 
