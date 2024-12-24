@@ -112,6 +112,10 @@ def set_status_from_dropdown(*args):
     status_entry.delete(0, tk.END)
     status_entry.insert(0, status_choice.get())
 
+def set_remark_from_dropdown(*args):
+    remark_entry.delete(0, tk.END)
+    remark_entry.insert(0, remark_choice.get())
+
 def calculate_and_display_totals():
     category = category_choice.get().strip()
     subcategory = subcategory_choice.get().strip()
@@ -160,31 +164,33 @@ def add_inventory_item():
         quantity = int(quantity_entry.get().strip())
         location = f"{location_choice.get().strip()}-{cabinet_number.get().strip()}-{description_entry.get().strip()}"
         remark = remark_entry.get().strip().lower()
+        user_input_note = item_note_entry.get().strip() if item_note_entry.get().strip() else ""  # 如果用户没有输入，确保是空字符串
 
         if quantity <= 0:
             raise ValueError("请输入一个正数。")
 
-        new_item_data = {
-            '大类名称': category,
-            '小类名称': subcategory,
-            '数量': quantity,
-            '存放位置': location,
-            '备注': remark
-        }
-
-        # Find matching items in the database, ignoring case
+        # Find matching items in the database, ignoring case and including item_note
         matching_items = inventory_df[
-            (inventory_df['大类名称'].str.lower() == new_item_data['大类名称']) &
-            (inventory_df['小类名称'].str.lower() == new_item_data['小类名称']) &
-            (inventory_df['备注'].str.lower() == new_item_data['备注'])
+            (inventory_df['大类名称'].str.lower() == category) &
+            (inventory_df['小类名称'].str.lower() == subcategory) &
+            (inventory_df['备注'].str.lower() == remark) &
+            (inventory_df['物品备注'].fillna('').str.lower() == user_input_note.lower())  # 处理数据库中的空值
         ]
 
         if not matching_items.empty:
-            # Update quantity of existing item
+            # Update quantity of existing item when all fields match
             inventory_df.loc[matching_items.index, '数量'] += quantity
             messagebox.showinfo("成功", "物品已存在，数量已更新。")
         else:
-            # Add new item to the DataFrame
+            # Add as new item if any field doesn't match
+            new_item_data = {
+                '大类名称': category,
+                '小类名称': subcategory,
+                '数量': quantity,
+                '存放位置': location,
+                '备注': remark,
+                '物品备注': user_input_note
+            }
             inventory_df = pd.concat([inventory_df, pd.DataFrame([new_item_data])], ignore_index=True)
             messagebox.showinfo("成功", "物品不存在，物品已添加!")
 
@@ -284,150 +290,268 @@ def search_borrower_items():
         text.insert(tk.END, f"交付：{delivered_items}。\n")
         text.insert(tk.END, f"损坏：{damaged_items}。\n")
 
-
 # GUI setup
 root = tk.Tk()
-root.title("仓库管理系统-v0.1-yhw最帅版")
-view_button = tk.Button(root, text="------------------------------------------>点击按钮，守护最棒的kd大将军<-----------------------------------------")
-view_button.pack()
+root.title("仓库管理系统-v0.2")
 
+# 初始化变量
+location_choice = tk.StringVar(value="627")
+cabinet_number = tk.StringVar(value="")
+category_choice = tk.StringVar(value="")
+subcategory_choice = tk.StringVar(value="")
+status_choice = tk.StringVar(value="借出")
+category_choice2 = tk.StringVar()
+subcategory_choice2 = tk.StringVar()
+detailed_description = tk.StringVar()
+remark_choice = tk.StringVar()
+# 设置样式
+style = ttk.Style()
+style.configure('Title.TLabel', font=('Arial', 12, 'bold'))
+style.configure('Header.TLabel', font=('Arial', 10))
+style.configure('Alert.TLabel', foreground='red', font=('Arial', 9))
+style.configure('Action.TButton', padding=5)
 
-# Frame for Inventory Management
-inventory_frame = tk.Frame(root)
-inventory_frame.pack(pady=10)
+# 创建主框架
+main_frame = ttk.Frame(root, padding="10")
+main_frame.pack(fill=tk.BOTH, expand=True)
 
-tk.Label(inventory_frame, text="大类别名称（nx，飞控,rtk...）").grid(row=0, column=0)
-category_entry = tk.Entry(inventory_frame)
-category_entry.insert(0, "") # Set default to empty string
-category_entry.grid(row=0, column=1)
+# 标题
+title_frame = ttk.Frame(main_frame)
+title_frame.pack(fill=tk.X, pady=(0, 10))
+title_label = ttk.Label(title_frame, 
+    text="仓库管理系统-给yhw点赞版", 
+    style='Title.TLabel',
+    anchor='center')
+title_label.pack(fill=tk.X)
 
-# Dropdown for category
-category_choice = tk.StringVar()
-category_menu = tk.OptionMenu(inventory_frame, category_choice, *inventory_df['大类名称'].unique(), command=set_category_from_dropdown)
-category_menu.grid(row=0, column=2)
+# 使用Notebook来组织不同功能区域
+notebook = ttk.Notebook(main_frame)
+notebook.pack(fill=tk.BOTH, expand=True)
 
-tk.Label(inventory_frame, text="子类别名称（8g核心板，底板，nxt v1, ...）").grid(row=1, column=0)
-subcategory_entry = tk.Entry(inventory_frame)
-subcategory_entry.insert(0, "")
-subcategory_entry.grid(row=1, column=1)
+# === 库存管理标签页 ===
+inventory_frame = ttk.Frame(notebook, padding="10")
+notebook.add(inventory_frame, text='库存管理')
 
-# Dropdown for subcategory
-subcategory_choice = tk.StringVar()
-subcategory_menu = tk.OptionMenu(inventory_frame, subcategory_choice, "", command=set_subcategory_from_dropdown)
-subcategory_menu.grid(row=1, column=2)
+# 库存输入区域
+input_frame = ttk.LabelFrame(inventory_frame, text="添加物品", padding="10")
+input_frame.pack(fill=tk.X, pady=(0, 10))
 
-tk.Label(inventory_frame, text="数量").grid(row=2, column=0)
-quantity_entry = tk.Entry(inventory_frame)
-quantity_entry.insert(0, "")
-quantity_entry.grid(row=2, column=1)
+# 第一行：大类别名称
+category_frame = ttk.Frame(input_frame)
+category_frame.pack(fill=tk.X, pady=2)
+ttk.Label(category_frame, text="大类别名称（可以输入或下拉）：", 
+         style='Header.TLabel', width=30).pack(side=tk.LEFT)
+category_entry = ttk.Entry(category_frame, width=30)
+category_entry.pack(side=tk.LEFT, padx=5)
+category_menu = ttk.OptionMenu(category_frame, category_choice, "",
+                             *sorted(inventory_df['大类名称'].unique()))
+category_menu.pack(side=tk.LEFT)
 
-# Location selection using dropdowns
-tk.Label(inventory_frame, text="存放位置（门号-柜子号-细分描述）").grid(row=3, column=0)
-location_choice = tk.StringVar(value="教室")
-location_menu = tk.OptionMenu(inventory_frame, location_choice, "627", "629", command=update_cabinet_options)
-location_menu.grid(row=3, column=1)
+# 第二行：子类别名称
+subcategory_frame = ttk.Frame(input_frame)
+subcategory_frame.pack(fill=tk.X, pady=2)
+ttk.Label(subcategory_frame, text="子类别名称（输入中文或者小写）：", 
+         style='Header.TLabel', width=30).pack(side=tk.LEFT)
+subcategory_entry = ttk.Entry(subcategory_frame, width=30)
+subcategory_entry.pack(side=tk.LEFT, padx=5)
+subcategory_menu = ttk.OptionMenu(subcategory_frame, subcategory_choice, "")
+subcategory_menu.pack(side=tk.LEFT)
 
-cabinet_number = tk.StringVar()
-cabinet_entry = tk.Entry(inventory_frame, textvariable=cabinet_number)
-cabinet_entry.grid(row=3, column=2)
+# 第三行：数量
+quantity_frame = ttk.Frame(input_frame)
+quantity_frame.pack(fill=tk.X, pady=2)
+ttk.Label(quantity_frame, text="数量：", 
+         style='Header.TLabel', width=30).pack(side=tk.LEFT)
+quantity_entry = ttk.Entry(quantity_frame, width=30)
+quantity_entry.pack(side=tk.LEFT, padx=5)
 
-# Dropdown for cabinet number
-# Cabinet Menu
-cabinet_number = tk.StringVar()
-cabinet_menu = ttk.Combobox(inventory_frame, textvariable=cabinet_number, state='readonly')
-cabinet_menu.grid(row=3, column=3)
-cabinet_menu.bind("<<ComboboxSelected>>", on_cabinet_menu_select)
+# 第四行：存放位置
+location_frame = ttk.Frame(input_frame)
+location_frame.pack(fill=tk.X, pady=2)
+ttk.Label(location_frame, text="存放位置（门号-柜子号-细分描述）：", 
+         style='Header.TLabel', width=30).pack(side=tk.LEFT)
+
+# Location Combobox
+location_combo = ttk.Combobox(location_frame, textvariable=location_choice,
+                            values=["627", "629"], width=10, state='readonly')
+location_combo.pack(side=tk.LEFT, padx=5)
+
+# Cabinet Entry and Combobox
+cabinet_entry = ttk.Entry(location_frame, textvariable=cabinet_number, width=15)
+cabinet_entry.pack(side=tk.LEFT, padx=5)
+
+cabinet_menu = ttk.Combobox(location_frame, width=15, state='readonly')
+cabinet_menu.pack(side=tk.LEFT, padx=5)
 
 # Description Entry
-description_entry = tk.Entry(inventory_frame)
-description_entry.grid(row=3, column=4)  # Placed to the right of description label
+description_entry = ttk.Entry(location_frame, width=20)
+description_entry.pack(side=tk.LEFT, padx=5)
 
+# 第五行：描述符
+remark_frame = ttk.Frame(input_frame)
+remark_frame.pack(fill=tk.X, pady=2)
+ttk.Label(remark_frame, text="描述符(好的，坏的，编号)：", 
+         style='Header.TLabel', width=30).pack(side=tk.LEFT)
+remark_entry = ttk.Entry(remark_frame, width=30)
+remark_entry.pack(side=tk.LEFT, padx=5)
+# 添加备注下拉菜单
+# 处理备注选项：将所有值转换为字符串，并过滤掉空值
+remark_options = inventory_df['备注'].fillna('').astype(str)  # 将NaN转换为空字符串
+remark_options = sorted([x for x in remark_options.unique() if x != ''])  # 排序并移除空字符串
 
-# Bind events
-location_choice.trace("w", lambda *args: on_location_menu_select(None)) # Trigger when location changes
+# 添加备注下拉菜单
+remark_menu = ttk.OptionMenu(remark_frame, 
+                            remark_choice, 
+                            "", 
+                            *remark_options,  # 使用处理后的选项
+                            command=set_remark_from_dropdown)
+remark_menu.pack(side=tk.LEFT)
+
+# 新增第六行：物品备注
+item_note_frame = ttk.Frame(input_frame)
+item_note_frame.pack(fill=tk.X, pady=2)
+ttk.Label(item_note_frame, text="物品备注（选填）：", 
+         style='Header.TLabel', width=30).pack(side=tk.LEFT)
+item_note_entry = ttk.Entry(item_note_frame, width=30)
+item_note_entry.pack(side=tk.LEFT, padx=5)
+item_note_entry.insert(0, "")  # 设置默认值为空字符串
+
+# 按钮区域
+button_frame = ttk.Frame(input_frame)
+button_frame.pack(fill=tk.X, pady=10)
+ttk.Button(button_frame, text="点击添加物品", 
+          command=add_inventory_item, style='Action.TButton').pack(side=tk.LEFT, padx=5)
+ttk.Button(button_frame, text="点击查找物品信息", 
+          command=calculate_and_display_totals, style='Action.TButton').pack(side=tk.LEFT, padx=5)
+
+# 警告信息
+alert_frame = ttk.Frame(input_frame)
+alert_frame.pack(fill=tk.X, pady=5)
+ttk.Label(alert_frame, text="管理员操作注意：物品先出库，再入库，最后处理损坏或交付！", 
+         style='Alert.TLabel').pack(side=tk.LEFT)
+ttk.Label(alert_frame, text="不知道描述符请查看数据库或找管理员贴标签！", 
+         style='Alert.TLabel').pack(side=tk.RIGHT)
+
+# === 借还管理标签页 ===
+borrow_return_frame = ttk.Frame(notebook, padding="10")
+notebook.add(borrow_return_frame, text='借还管理')
+
+# 借还管理区域
+borrow_frame = ttk.LabelFrame(borrow_return_frame, text="借还管理", padding="10")
+borrow_frame.pack(fill=tk.X, pady=(0, 10))
+
+# 第一行：借还人员
+borrower_frame = ttk.Frame(borrow_frame)
+borrower_frame.pack(fill=tk.X, pady=2)
+ttk.Label(borrower_frame, text="借还人员：", 
+         style='Header.TLabel', width=30).pack(side=tk.LEFT)
+borrower_entry = ttk.Entry(borrower_frame, width=30)
+borrower_entry.pack(side=tk.LEFT, padx=5)
+
+# 第二行：借还状态
+status_frame = ttk.Frame(borrow_frame)
+status_frame.pack(fill=tk.X, pady=2)
+ttk.Label(status_frame, text="借还状态：", 
+         style='Header.TLabel', width=30).pack(side=tk.LEFT)
+status_entry = ttk.Entry(status_frame, width=30)
+status_entry.pack(side=tk.LEFT, padx=5)
+
+# Define a function to update the status_entry
+def update_status_entry(*args):
+    status_entry.delete(0, tk.END)
+    status_entry.insert(0, status_choice.get())
+
+# Bind the function to the status_choice variable
+status_choice.trace("w", update_status_entry)
+
+status_menu = ttk.OptionMenu(status_frame, status_choice, 
+                           "默认","借出", "归还", "交付", "采购", "损坏")
+status_menu.pack(side=tk.LEFT)
+
+# 第三行：大类别名称
+category2_frame = ttk.Frame(borrow_frame)
+category2_frame.pack(fill=tk.X, pady=2)
+ttk.Label(category2_frame, text="大类别名称：", 
+         style='Header.TLabel', width=30).pack(side=tk.LEFT)
+category_entry2 = ttk.Entry(category2_frame, width=30)
+category_entry2.pack(side=tk.LEFT, padx=5)
+category_menu2 = ttk.OptionMenu(category2_frame, category_choice2, "",
+                              *sorted(inventory_df['大类名称'].unique()))
+category_menu2.pack(side=tk.LEFT)
+
+# 第四行：子类别名称
+subcategory2_frame = ttk.Frame(borrow_frame)
+subcategory2_frame.pack(fill=tk.X, pady=2)
+ttk.Label(subcategory2_frame, text="子类别名称：", 
+         style='Header.TLabel', width=30).pack(side=tk.LEFT)
+subcategory_entry2 = ttk.Entry(subcategory2_frame, width=30)
+subcategory_entry2.pack(side=tk.LEFT, padx=5)
+subcategory_menu2 = ttk.OptionMenu(subcategory2_frame, subcategory_choice2, "")
+subcategory_menu2.pack(side=tk.LEFT)
+
+# 第五行：数量
+quantity2_frame = ttk.Frame(borrow_frame)
+quantity2_frame.pack(fill=tk.X, pady=2)
+ttk.Label(quantity2_frame, text="数量：", 
+         style='Header.TLabel', width=30).pack(side=tk.LEFT)
+quantity_entry2 = ttk.Entry(quantity2_frame, width=30)
+quantity_entry2.pack(side=tk.LEFT, padx=5)
+
+# 第六行：描述符
+remark2_frame = ttk.Frame(borrow_frame)
+remark2_frame.pack(fill=tk.X, pady=2)
+ttk.Label(remark2_frame, text="描述符（借出时的描述符）：", 
+         style='Header.TLabel', width=30).pack(side=tk.LEFT)
+remark_entry2 = ttk.Entry(remark2_frame, width=30)
+remark_entry2.pack(side=tk.LEFT, padx=5)
+
+# 更新按钮
+update_button = ttk.Button(borrow_frame, text="点击更新数据库", 
+                         command=update_databases, style='Action.TButton')
+update_button.pack(pady=10)
+
+# === 查询功能标签页 ===
+search_frame = ttk.Frame(notebook, padding="10")
+notebook.add(search_frame, text='查询功能')
+
+# 查询区域
+search_area = ttk.LabelFrame(search_frame, text="查询功能", padding="10")
+search_area.pack(fill=tk.X, pady=(0, 10))
+
+# 查询输入框和按钮
+search_input_frame = ttk.Frame(search_area)
+search_input_frame.pack(fill=tk.X, pady=5)
+ttk.Label(search_input_frame, text="查找名下财产：", 
+         style='Header.TLabel').pack(side=tk.LEFT)
+search_entry = ttk.Entry(search_input_frame, width=30)
+search_entry.pack(side=tk.LEFT, padx=5)
+search_button = ttk.Button(search_input_frame, text="开始查找", 
+                         command=search_borrower_items, style='Action.TButton')
+search_button.pack(side=tk.LEFT, padx=5)
+
+# 查看记录按钮
+view_frame = ttk.Frame(search_area)
+view_frame.pack(fill=tk.X, pady=10)
+view_button = ttk.Button(view_frame, text="查看仓库物品详细信息", 
+                       command=view_inventory, style='Action.TButton')
+view_button.pack(side=tk.LEFT, padx=5)
+view_borrow_return_button = ttk.Button(view_frame, text="查看借还记录", 
+                                    command=view_borrow_return, style='Action.TButton')
+view_borrow_return_button.pack(side=tk.LEFT, padx=5)
+
+# 绑定事件
+location_combo.bind('<<ComboboxSelected>>', on_location_menu_select)
+cabinet_menu.bind('<<ComboboxSelected>>', on_cabinet_menu_select)
 category_entry.bind("<FocusOut>", lambda event: on_category_subcategory_select(None))
 subcategory_entry.bind("<FocusOut>", lambda event: on_category_subcategory_select(None))
+# 绑定事件
+category_choice.trace("w", set_category_from_dropdown)
+subcategory_choice.trace("w", set_subcategory_from_dropdown)
+# 绑定事件
+category_choice.trace("w", set_category_from_dropdown)
+subcategory_choice.trace("w", set_subcategory_from_dropdown)
+category_choice2.trace("w", set_category_from_dropdown2)
+subcategory_choice2.trace("w", set_subcategory_from_dropdown2)
 
-tk.Label(inventory_frame, text="描述符(建议写上：好的，坏的，编号，便于数据库查询)").grid(row=4, column=0)
-remark_entry = tk.Entry(inventory_frame)
-remark_entry.insert(0, "")
-remark_entry.grid(row=4, column=1)
-
-add_button = tk.Button(inventory_frame, text="点击添加物品", command=add_inventory_item)
-add_button.grid(row=5, columnspan=4, pady=5)
-
-# Button to calculate and display totals
-calculate_button = tk.Button(inventory_frame, text="点击查找物品和数量吧~", command=calculate_and_display_totals)
-calculate_button.grid(row=5, column=3, pady=5)
-
-alert_button = tk.Button(inventory_frame, text=">>>>>先出库，再入库，操作完再操作损坏或者交付!<<<<<")
-alert_button.grid(row=6, columnspan=3, pady=5)
-alert2_button = tk.Button(inventory_frame, text=">>>>>不知道备注请看数据库或飞书表格<<<<<")
-alert2_button.grid(row=6, column=3, pady=5)
-
-# Frame for Borrow/Return Management
-borrow_return_frame = tk.Frame(root)
-borrow_return_frame.pack(pady=10)
-
-tk.Label(borrow_return_frame, text="借还人员").grid(row=0, column=0)
-borrower_entry = tk.Entry(borrow_return_frame)
-borrower_entry.grid(row=0, column=1)
-
-tk.Label(borrow_return_frame, text="借还状态（借出，归还，交付，采购, 损坏）").grid(row=1, column=0)
-status_choice = tk.StringVar(value="默认")
-status_menu = tk.OptionMenu(borrow_return_frame, status_choice, "借出", "归还",'交付','采购','损坏', command=set_status_from_dropdown)
-status_menu.grid(row=1, column=2)
-status_entry = tk.Entry(borrow_return_frame)
-status_entry.grid(row=1, column=1)
-
-
-tk.Label(borrow_return_frame, text="大类别名称").grid(row=2, column=0)
-category_entry2 = tk.Entry(borrow_return_frame)
-category_entry2.grid(row=2, column=1)
-# Dropdown for subcategory
-category_choice2 = tk.StringVar()
-category_menu2 = tk.OptionMenu(borrow_return_frame, category_choice2, *inventory_df['大类名称'].unique(), command=set_category_from_dropdown2)
-category_menu2.grid(row=2, column=2)
-
-tk.Label(borrow_return_frame, text="子类别名称").grid(row=3, column=0)
-subcategory_entry2 = tk.Entry(borrow_return_frame)
-subcategory_entry2.grid(row=3, column=1)
-subcategory_choice2 = tk.StringVar()
-subcategory_menu2 = tk.OptionMenu(borrow_return_frame, subcategory_choice2, "", command=set_subcategory_from_dropdown2)
-subcategory_menu2.grid(row=3, column=2)
-
-tk.Label(borrow_return_frame, text="数量").grid(row=4, column=0)
-quantity_entry2 = tk.Entry(borrow_return_frame)
-quantity_entry2.grid(row=4, column=1)
-
-tk.Label(borrow_return_frame, text="备注（借出时的备注，好的，坏的，编号等）").grid(row=5, column=0)
-remark_entry2 = tk.Entry(borrow_return_frame)
-remark_entry2.grid(row=5, column=1)
-
-update_button = tk.Button(borrow_return_frame, text="点击更新数据库", command=update_databases)
-update_button.grid(row=6, columnspan=2, pady=5)
-
-
-
-# Frame for Search Functionality
-search_frame = tk.Frame(root)
-search_frame.pack(pady=10)
-
-tk.Label(search_frame, text="查找你名下的财产").grid(row=0, column=0)
-search_entry = tk.Entry(search_frame)
-search_entry.grid(row=0, column=1)
-
-search_button = tk.Button(search_frame, text="开始查找吧~", command=search_borrower_items)
-search_button.grid(row=1, columnspan=2, pady=5)
-
-# Frame for Viewing Records
-view_frame = tk.Frame(root)
-view_frame.pack(pady=10)
-
-view_button = tk.Button(view_frame, text="查看仓库", command=view_inventory)
-view_button.grid(row=0, column=0, padx=5)
-
-view_borrow_return_button = tk.Button(view_frame, text="查看借还记录", command=view_borrow_return)
-view_borrow_return_button.grid(row=0, column=1, padx=5)
-
+# 启动主循环
 root.mainloop()
