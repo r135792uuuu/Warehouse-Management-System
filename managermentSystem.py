@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import messagebox
 import tkinter.ttk as ttk
 from tkinter import scrolledtext  # For better text display
+from datetime import datetime  # 添加这行来导入datetime
 
 # Load databases
 inventory_db_path = 'E:\\Program\\WarehouseManageSystem\\database\\database1.xlsx'
@@ -116,6 +117,65 @@ def set_remark_from_dropdown(*args):
     remark_entry.delete(0, tk.END)
     remark_entry.insert(0, remark_choice.get())
 
+# 添加新的函数
+def set_borrower_from_dropdown(*args):
+    borrower_entry.delete(0, tk.END)
+    borrower_entry.insert(0, borrower_choice.get())
+
+# 添加新的函数
+def set_search_item_from_dropdown(*args):
+    search_item_entry.delete(0, tk.END)
+    search_item_entry.insert(0, search_item_choice.get())
+    update_search_subitem_options()
+
+def set_search_subitem_from_dropdown(*args):
+    search_subitem_entry.delete(0, tk.END)
+    search_subitem_entry.insert(0, search_subitem_choice.get())
+
+def update_search_subitem_options(*args):
+    selected_item = search_item_entry.get().strip()
+    if selected_item:
+        try:
+            subitems = inventory_df[inventory_df['大类名称'] == selected_item]['小类名称'].unique()
+            search_subitem_menu['menu'].delete(0, 'end')
+            for subitem in subitems:
+                search_subitem_menu['menu'].add_command(
+                    label=subitem, 
+                    command=tk._setit(search_subitem_choice, subitem, set_search_subitem_from_dropdown))
+        except Exception as e:
+            messagebox.showerror("Error", f"更新子类别选项时出错: {e}")
+
+def search_item_records():
+    item = search_item_entry.get().strip()
+    subitem = search_subitem_entry.get().strip()
+    
+    if not item or not subitem:
+        messagebox.showerror("错误", "请选择要查询的物品类别和子类别")
+        return
+        
+    search_window = tk.Toplevel(root)
+    search_window.title(f"{item}-{subitem}的借还记录")
+    text = scrolledtext.ScrolledText(search_window)
+    text.pack(fill=tk.BOTH, expand=True)
+    
+    # 筛选指定物品的记录
+    item_records = borrow_return_df[
+        (borrow_return_df['借出物品大类名称'] == item) & 
+        (borrow_return_df['借出物品小类名称'] == subitem)
+    ]
+    
+    if item_records.empty:
+        text.insert(tk.END, f"未找到 {item}-{subitem} 的借还记录\n")
+    else:
+        for index, row in item_records.iterrows():
+            date = row['日期'] if '日期' in row else "未记录"
+            text.insert(tk.END, 
+                      f"日期: {date}, 人员: {row['保管人员']}, "
+                      f"{row['借出物品大类名称']} - {row['借出物品小类名称']}: "
+                      f"{row['借出物品数量']} ({row['物品状态']})\n")
+
+### 主体功能函数
+
 def calculate_and_display_totals():
     category = category_choice.get().strip()
     subcategory = subcategory_choice.get().strip()
@@ -210,6 +270,8 @@ def update_databases():
         quantity = int(quantity_entry2.get())
         status = status_entry.get()
         remark = remark_entry2.get()
+        # 获取当前日期并格式化为YYYYMMDD格式
+        current_date = datetime.now().strftime('%Y%m%d')
 
         if quantity <= 0:
             raise ValueError("不要乱写负数！fk你！.")
@@ -221,7 +283,8 @@ def update_databases():
             '借出物品数量': quantity,
             '保管人员': borrower,
             '物品状态': status,
-            '备注': remark
+            '备注': remark,
+            '日期': current_date  # 添加日期字段
         }
         global borrow_return_df
         borrow_return_df = borrow_return_df.append(new_borrow_entry, ignore_index=True)
@@ -281,14 +344,48 @@ def search_borrower_items():
         def format_item(count, category, subcategory):
             return f"{count} 个 {category}-{subcategory}"
 
-        current_items = ", ".join([format_item(count, category, subcategory) for (category, subcategory), count in current_count.items()])
-        delivered_items = ", ".join([format_item(count, category, subcategory) for (category, subcategory), count in delivered_count.items()])
-        damaged_items = ", ".join([format_item(count, category, subcategory) for (category, subcategory), count in damaged_count.items()])
-
+        # Filter out items with current_count of 0
+        current_items = ", ".join([
+            format_item(count, category, subcategory)
+            for (category, subcategory), count in current_count.items()
+            if count >= 1  # Only include items with count >= 1
+        ])
+        delivered_items = ", ".join([
+            format_item(count, category, subcategory)
+            for (category, subcategory), count in delivered_count.items()
+        ])
+        damaged_items = ", ".join([
+            format_item(count, category, subcategory)
+            for (category, subcategory), count in damaged_count.items()
+        ])
 
         text.insert(tk.END, f"当前名下还有：{current_items}。\n")
         text.insert(tk.END, f"交付：{delivered_items}。\n")
         text.insert(tk.END, f"损坏：{damaged_items}。\n")
+
+def view_personal_records(borrower_name):
+    if not borrower_name:
+        messagebox.showerror("错误", "请输入要查询的人员姓名")
+        return
+        
+    personal_window = tk.Toplevel(root)
+    personal_window.title(f"{borrower_name}的借还记录")
+    text = scrolledtext.ScrolledText(personal_window)
+    text.pack(fill=tk.BOTH, expand=True)
+    
+    # 筛选指定人员的记录
+    personal_records = borrow_return_df[borrow_return_df['保管人员'] == borrower_name]
+    
+    if personal_records.empty:
+        text.insert(tk.END, f"未找到 {borrower_name} 的借还记录\n")
+    else:
+        for index, row in personal_records.iterrows():
+            # 获取日期信息，如果没有日期字段则显示"未记录"
+            date = row['日期'] if '日期' in row else "未记录"
+            text.insert(tk.END, 
+                      f"日期: {date}, 人员: {row['保管人员']}, "
+                      f"{row['借出物品大类名称']} - {row['借出物品小类名称']}: "
+                      f"{row['借出物品数量']} ({row['物品状态']})\n")
 
 # GUI setup
 root = tk.Tk()
@@ -304,6 +401,9 @@ category_choice2 = tk.StringVar()
 subcategory_choice2 = tk.StringVar()
 detailed_description = tk.StringVar()
 remark_choice = tk.StringVar()
+search_item_choice = tk.StringVar()
+search_subitem_choice = tk.StringVar()
+borrower_choice = tk.StringVar()
 # 设置样式
 style = ttk.Style()
 style.configure('Title.TLabel', font=('Arial', 12, 'bold'))
@@ -429,7 +529,7 @@ alert_frame = ttk.Frame(input_frame)
 alert_frame.pack(fill=tk.X, pady=5)
 ttk.Label(alert_frame, text="管理员操作注意：物品先出库，再入库，最后处理损坏或交付！", 
          style='Alert.TLabel').pack(side=tk.LEFT)
-ttk.Label(alert_frame, text="不知道描述符请查看数据库或找管理员贴标签！", 
+ttk.Label(alert_frame, text="前五行必须输入，不知道描述符请查看数据库或找管理员贴标签！", 
          style='Alert.TLabel').pack(side=tk.RIGHT)
 
 # === 借还管理标签页 ===
@@ -447,6 +547,14 @@ ttk.Label(borrower_frame, text="借还人员：",
          style='Header.TLabel', width=30).pack(side=tk.LEFT)
 borrower_entry = ttk.Entry(borrower_frame, width=30)
 borrower_entry.pack(side=tk.LEFT, padx=5)
+
+# 添加人员下拉菜单
+borrower_menu = ttk.OptionMenu(borrower_frame, 
+                              borrower_choice,
+                              "",
+                              *sorted(borrow_return_df['保管人员'].unique()),
+                              command=set_borrower_from_dropdown)
+borrower_menu.pack(side=tk.LEFT, padx=5)
 
 # 第二行：借还状态
 status_frame = ttk.Frame(borrow_frame)
@@ -500,7 +608,7 @@ quantity_entry2.pack(side=tk.LEFT, padx=5)
 # 第六行：描述符
 remark2_frame = ttk.Frame(borrow_frame)
 remark2_frame.pack(fill=tk.X, pady=2)
-ttk.Label(remark2_frame, text="描述符（借出时的描述符）：", 
+ttk.Label(remark2_frame, text="描述符（请查看上一页面下拉菜单）：", 
          style='Header.TLabel', width=30).pack(side=tk.LEFT)
 remark_entry2 = ttk.Entry(remark2_frame, width=30)
 remark_entry2.pack(side=tk.LEFT, padx=5)
@@ -514,44 +622,99 @@ update_button.pack(pady=10)
 search_frame = ttk.Frame(notebook, padding="10")
 notebook.add(search_frame, text='查询功能')
 
-# 查询区域
-search_area = ttk.LabelFrame(search_frame, text="查询功能", padding="10")
+# 查询区域1
+search_area = ttk.LabelFrame(search_frame, text="按人员查询", padding="10")
 search_area.pack(fill=tk.X, pady=(0, 10))
 
 # 查询输入框和按钮
 search_input_frame = ttk.Frame(search_area)
 search_input_frame.pack(fill=tk.X, pady=5)
-ttk.Label(search_input_frame, text="查找名下财产：", 
+ttk.Label(search_input_frame, text="输入人员姓名：", 
          style='Header.TLabel').pack(side=tk.LEFT)
 search_entry = ttk.Entry(search_input_frame, width=30)
 search_entry.pack(side=tk.LEFT, padx=5)
-search_button = ttk.Button(search_input_frame, text="开始查找", 
+search_button = ttk.Button(search_input_frame, text="查找名下物品", 
                          command=search_borrower_items, style='Action.TButton')
 search_button.pack(side=tk.LEFT, padx=5)
+
+# 添加查看个人借还记录按钮
+view_personal_button = ttk.Button(search_input_frame, text="查看借还记录", 
+                                command=lambda: view_personal_records(search_entry.get()), 
+                                style='Action.TButton')
+view_personal_button.pack(side=tk.LEFT, padx=5)
 
 # 查看记录按钮
 view_frame = ttk.Frame(search_area)
 view_frame.pack(fill=tk.X, pady=10)
-view_button = ttk.Button(view_frame, text="查看仓库物品详细信息", 
+view_button = ttk.Button(view_frame, text="查看仓库总表物品详细信息", 
                        command=view_inventory, style='Action.TButton')
 view_button.pack(side=tk.LEFT, padx=5)
-view_borrow_return_button = ttk.Button(view_frame, text="查看借还记录", 
+view_borrow_return_button = ttk.Button(view_frame, text="查看仓库总表借还记录", 
                                     command=view_borrow_return, style='Action.TButton')
 view_borrow_return_button.pack(side=tk.LEFT, padx=5)
+
+# 查询区域2：按物品查询
+# 查询区域2：按物品查询
+search_area2 = ttk.LabelFrame(search_frame, text="按物品查询", padding="10")
+search_area2.pack(fill=tk.X, pady=(0, 10))
+
+# 第一行：物品大类
+search_item_frame = ttk.Frame(search_area2)
+search_item_frame.pack(fill=tk.X, pady=2)
+ttk.Label(search_item_frame, text="物品大类：", 
+         style='Header.TLabel', width=15).pack(side=tk.LEFT)
+search_item_entry = ttk.Entry(search_item_frame, width=30)
+search_item_entry.pack(side=tk.LEFT, padx=5)
+search_item_menu = ttk.OptionMenu(search_item_frame, 
+                                 search_item_choice, "",
+                                 *sorted(inventory_df['大类名称'].unique()),
+                                 command=set_search_item_from_dropdown)
+search_item_menu.pack(side=tk.LEFT, padx=5)
+
+# 第二行：物品子类
+search_subitem_frame = ttk.Frame(search_area2)
+search_subitem_frame.pack(fill=tk.X, pady=2)
+ttk.Label(search_subitem_frame, text="物品子类：", 
+         style='Header.TLabel', width=15).pack(side=tk.LEFT)
+search_subitem_entry = ttk.Entry(search_subitem_frame, width=30)
+search_subitem_entry.pack(side=tk.LEFT, padx=5)
+search_subitem_menu = ttk.OptionMenu(search_subitem_frame, 
+                                    search_subitem_choice,
+                                    "",
+                                    command=set_search_subitem_from_dropdown)
+search_subitem_menu.pack(side=tk.LEFT, padx=5)
+
+# 搜索按钮
+search_item_button = ttk.Button(search_area2, 
+                               text="搜索物品", 
+                               command=search_item_records,
+                               style='Action.TButton')
+search_item_button.pack(pady=5)
+
 
 # 绑定事件
 location_combo.bind('<<ComboboxSelected>>', on_location_menu_select)
 cabinet_menu.bind('<<ComboboxSelected>>', on_cabinet_menu_select)
 category_entry.bind("<FocusOut>", lambda event: on_category_subcategory_select(None))
 subcategory_entry.bind("<FocusOut>", lambda event: on_category_subcategory_select(None))
-# 绑定事件
 category_choice.trace("w", set_category_from_dropdown)
 subcategory_choice.trace("w", set_subcategory_from_dropdown)
-# 绑定事件
 category_choice.trace("w", set_category_from_dropdown)
 subcategory_choice.trace("w", set_subcategory_from_dropdown)
 category_choice2.trace("w", set_category_from_dropdown2)
 subcategory_choice2.trace("w", set_subcategory_from_dropdown2)
+
+
+# 新增的物品查询相关的事件绑定
+search_item_choice.trace("w", lambda *args: set_search_item_from_dropdown())
+search_subitem_choice.trace("w", lambda *args: set_search_subitem_from_dropdown())
+borrower_choice.trace("w", lambda *args: set_borrower_from_dropdown())
+search_item_entry.bind("<FocusOut>", lambda event: update_search_subitem_options())
+# 为搜索按钮绑定回车键
+search_item_entry.bind("<Return>", lambda event: search_item_records())
+search_subitem_entry.bind("<Return>", lambda event: search_item_records())
+# 为菜单选项绑定事件
+search_item_menu.bind('<Button-1>', lambda event: update_search_subitem_options())
 
 # 启动主循环
 root.mainloop()
