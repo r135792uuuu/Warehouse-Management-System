@@ -154,11 +154,37 @@ def search_item_records():
         return
         
     search_window = tk.Toplevel(root)
-    search_window.title(f"{item}-{subitem}的借还记录")
+    search_window.title(f"{item}-{subitem}的借还记录与库存") # 更新窗口标题
     text = scrolledtext.ScrolledText(search_window)
     text.pack(fill=tk.BOTH, expand=True)
+
+    # 查询当前库存总量
+    try:
+        # 筛选库存中匹配的物品，不区分备注和物品备注，只看大类和小类
+        # 假设 '大类名称' 和 '小类名称' 在 inventory_df 中是准确的
+        current_inventory = inventory_df[
+            (inventory_df['大类名称'].str.lower() == item.lower()) &
+            (inventory_df['小类名称'].str.lower() == subitem.lower())
+        ]
+        total_quantity_in_stock = current_inventory['数量'].sum()
+        text.insert(tk.END, f"物品【{item} - {subitem}】当前仓库总剩余数量: {total_quantity_in_stock}\n")
+
+        # 计算并显示备注为'好的'和'坏的'物品数量
+        if not current_inventory.empty:
+            good_items_quantity = current_inventory[current_inventory['备注'].str.lower() == '好的']['数量'].sum()
+            bad_items_quantity = current_inventory[current_inventory['备注'].str.lower() == '坏的']['数量'].sum()
+            text.insert(tk.END, f"  其中，备注为【好的】数量: {good_items_quantity}\n")
+            text.insert(tk.END, f"  其中，备注为【坏的】数量: {bad_items_quantity}\n")
+        
+
+        text.insert(tk.END, "---------------------------------------------------\n")
+        text.insert(tk.END, "借还记录详情:\n")
+    except Exception as e:
+        text.insert(tk.END, f"查询库存数量或备注时发生错误: {e}\n")
+        text.insert(tk.END, "---------------------------------------------------\n")
+        text.insert(tk.END, "借还记录详情:\n")
     
-    # 筛选指定物品的记录
+    # 筛选指定物品的借还记录
     item_records = borrow_return_df[
         (borrow_return_df['借出物品大类名称'] == item) & 
         (borrow_return_df['借出物品小类名称'] == subitem)
@@ -168,14 +194,20 @@ def search_item_records():
         text.insert(tk.END, f"未找到 {item}-{subitem} 的借还记录\n")
     else:
         for index, row in item_records.iterrows():
-            date = row['日期'] if '日期' in row else "未记录"
+            date_val = row.get('日期', '无日期')
+            borrower_val = row.get('保管人员', '无')
+            category_val = row.get('借出物品大类名称', '无')
+            subcategory_val = row.get('借出物品小类名称', '无')
+            quantity_val = row.get('借出物品数量', 0)
+            status_val = row.get('物品状态', '无')
+            remark_val = row.get('备注', '无') # 获取备注信息
+            
             text.insert(tk.END, 
-                      f"日期: {date}, 人员: {row['保管人员']}, "
-                      f"{row['借出物品大类名称']} - {row['借出物品小类名称']}: "
-                      f"{row['借出物品数量']} ({row['物品状态']})\n")
+                        f"日期: {date_val}, 人员: {borrower_val}, "
+                        f"物品: {category_val} - {subcategory_val}, "
+                        f"数量: {quantity_val}, 状态: {status_val}, 备注: {remark_val}\n")
 
 ### 主体功能函数
-
 def calculate_and_display_totals():
     category = category_choice.get().strip()
     subcategory = subcategory_choice.get().strip()
@@ -206,7 +238,7 @@ def view_inventory():
     text = tk.Text(inventory_window)
     text.pack()
     for index, row in inventory_df.iterrows():
-        text.insert(tk.END, f"{row['大类名称']} - {row['小类名称']}: {row['数量']} 放在 {row['存放位置']}\n")
+        text.insert(tk.END, f"{row['大类名称']} - {row['小类名称']}({row['备注']}): {row['数量']} 放在 {row['存放位置']}\n")
 
 def view_borrow_return():
     borrow_return_window = tk.Toplevel(root)
@@ -240,7 +272,7 @@ def add_inventory_item():
         if not matching_items.empty:
             # Update quantity of existing item when all fields match
             inventory_df.loc[matching_items.index, '数量'] += quantity
-            messagebox.showinfo("成功", "物品已存在，数量已更新。")
+            # messagebox.showinfo("成功", "物品已存在，数量已更新。")
         else:
             # Add as new item if any field doesn't match
             new_item_data = {
@@ -252,10 +284,25 @@ def add_inventory_item():
                 '物品备注': user_input_note
             }
             inventory_df = pd.concat([inventory_df, pd.DataFrame([new_item_data])], ignore_index=True)
-            messagebox.showinfo("成功", "物品不存在，物品已添加!")
+            # messagebox.showinfo("成功", "物品不存在，物品已添加!")
 
         # Save updated DataFrame to Excel
         inventory_df.to_excel(inventory_db_path, index=False, engine='openpyxl')
+
+        # Re-read the updated inventory database
+        try:
+            inventory_df = pd.read_excel(inventory_db_path, engine='openpyxl')
+            # Ensure data types are consistent after reloading.
+            if '数量' in inventory_df.columns:
+                 inventory_df['数量'] = inventory_df['数量'].astype(int)
+            # Potentially update UI elements that depend on inventory_df if necessary
+            # For example, re-populating dropdowns:
+            # populate_main_category_options() # Assuming such a function exists or is needed
+            # populate_all_dropdowns_from_inventory() # A more generic function
+            messagebox.showinfo("成功", "物品已添加/更新，并且数据库已刷新。") # Updated success message
+        except Exception as e:
+            messagebox.showerror("错误", f"成功保存物品，但刷新数据库时出错: {e}")
+
 
     except ValueError as e:
         messagebox.showerror("Error", f"Invalid input: {e}")
@@ -477,11 +524,11 @@ location_combo = ttk.Combobox(location_frame, textvariable=location_choice,
 location_combo.pack(side=tk.LEFT, padx=5)
 
 # Cabinet Entry and Combobox
+cabinet_menu = ttk.Combobox(location_frame, width=15, state='readonly')
+cabinet_menu.pack(side=tk.LEFT, padx=5)
 cabinet_entry = ttk.Entry(location_frame, textvariable=cabinet_number, width=15)
 cabinet_entry.pack(side=tk.LEFT, padx=5)
 
-cabinet_menu = ttk.Combobox(location_frame, width=15, state='readonly')
-cabinet_menu.pack(side=tk.LEFT, padx=5)
 
 # Description Entry
 description_entry = ttk.Entry(location_frame, width=20)
@@ -490,7 +537,7 @@ description_entry.pack(side=tk.LEFT, padx=5)
 # 第五行：描述符
 remark_frame = ttk.Frame(input_frame)
 remark_frame.pack(fill=tk.X, pady=2)
-ttk.Label(remark_frame, text="描述符(好的，坏的，编号)：", 
+ttk.Label(remark_frame, text="描述符(好的，坏的，无)：", 
          style='Header.TLabel', width=30).pack(side=tk.LEFT)
 remark_entry = ttk.Entry(remark_frame, width=30)
 remark_entry.pack(side=tk.LEFT, padx=5)
