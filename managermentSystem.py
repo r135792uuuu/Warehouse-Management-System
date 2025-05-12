@@ -4,12 +4,49 @@ from tkinter import messagebox
 import tkinter.ttk as ttk
 from tkinter import scrolledtext  # For better text display
 from datetime import datetime  # 添加这行来导入datetime
+import sys
 
-# Load databases
-inventory_db_path = 'E:\\Program\\WarehouseManageSystem\\database\\database1.xlsx'
-borrow_return_db_path = 'E:\\Program\\WarehouseManageSystem\\database\\database2.xlsx'
+# Load databases本地数据
+# inventory_db_path = 'E:\\Program\\WarehouseManageSystem\\database\\database1.xlsx'
+# borrow_return_db_path = 'E:\\Program\\WarehouseManageSystem\\database\\database2.xlsx'
+# permissions_return_db_path = 'E:\\Program\\WarehouseManageSystem\\database\\permissions.xlsx'
+
+# 飞书表格api相关。很麻烦，暂时放弃
+# 知识库id ： https://pcnkfnfllq1a.feishu.cn/wiki/ZGMZwPVqriCrU6kJ8nQcfMExnqL
+# excel表格链接： https://pcnkfnfllq1a.feishu.cn/wiki/KqjZw2BCdi4vx1k6re5cav1MnAe
+
+# 后面开发将直接在NAS上维护。nas的管理中我设置了仅管理员权限可以访问。需要的话后面更改
+# nas表格地址： //HILAB627_DS/database
+inventory_db_path = '//HILAB627_DS/database/database1.xlsx'
+borrow_return_db_path = '//HILAB627_DS/database/database2.xlsx'
+permissions_return_db_path = '//HILAB627_DS/database/permissions.xlsx'
 
 
+# 全局变量，用于存储登录用户和权限信息
+LOGGED_IN_USER = None
+USER_PERMISSION = None
+USER_NAME = None
+# 在主程序启动时获取传递过来的用户名和权限
+if __name__ == "__main__":
+    if len(sys.argv) == 4:  # 脚本名 + 用户名 + 权限 + 姓名
+        LOGGED_IN_USER = sys.argv[1]
+        USER_PERMISSION = sys.argv[2]
+        USER_NAME = sys.argv[3]
+        print(f"主程序已启动。登录用户: {LOGGED_IN_USER}, 权限: {USER_PERMISSION}, 姓名: {USER_NAME}")
+        # 你可以在这里根据 USER_PERMISSION 的值来控制程序的不同行为或界面显示
+    elif len(sys.argv) == 1: # 如果直接运行 managermentSystem.py 而没有参数
+        print("主程序直接启动（未传递用户信息和权限）。")
+        # 此处可以添加逻辑，例如：
+        # 1. 强制退出并提示需要通过登录界面启动
+        messagebox.showerror("启动错误", "请通过登录界面启动程序。")
+        # exit()
+        # 2. 或者以默认用户/受限权限运行（不推荐，除非有明确场景）
+    else:
+        print("错误：传递给主应用程序的参数数量不正确。")
+        messagebox.showerror("启动错误", "启动参数错误。")
+        exit()
+
+# 加载数据库
 try:
     inventory_df = pd.read_excel(inventory_db_path, engine='openpyxl')
     borrow_return_df = pd.read_excel(borrow_return_db_path, engine='openpyxl')
@@ -47,16 +84,87 @@ def populate_cabinet_menu(location):
     else:
         cabinet_menu['values'] = []
 
+def populate_description_menu(location_filter, cabinet_filter):
+    """Populates the description_menu based on the selected category, subcategory, location and cabinet."""
+    # 获取当前选择的大类和小类 (来自用于添加入库的输入框)
+    current_category = category_entry.get().strip().lower()
+    current_subcategory = subcategory_entry.get().strip().lower()
+
+    # 复制一份 DataFrame 以免修改原始数据
+    filtered_df = inventory_df.copy()
+
+    # 1. 根据大类筛选
+    if current_category:
+        filtered_df = filtered_df[filtered_df['大类名称'].str.lower() == current_category]
+
+    # 2. 根据小类筛选 (在已按大类筛选的基础上)
+    if current_subcategory:
+        filtered_df = filtered_df[filtered_df['小类名称'].str.lower() == current_subcategory]
+
+    # 3. 根据位置和柜子筛选描述
+    if location_filter and cabinet_filter:
+        try:
+            # 确保 '存放位置' 列是字符串类型，便于处理
+            # 从已经按 category/subcategory 筛选过的 filtered_df 中提取存放位置信息
+            parts = filtered_df['存放位置'].astype(str).str.split('-', n=2, expand=True)
+            
+            # expand=True 会创建新的列，如果分割数不足，则后续列为 None
+            # 我们需要确保 parts 有足够的列，或者在访问前检查
+            part0_series = parts[0] if 0 in parts.columns else pd.Series(dtype='str')
+            part1_series = parts[1] if 1 in parts.columns else pd.Series(dtype='str')
+            part2_series = parts[2] if 2 in parts.columns else pd.Series(dtype='str')
+
+            # 创建筛选条件：第一部分匹配 location_filter 且 第二部分匹配 cabinet_filter
+            mask = (part0_series.str.lower() == location_filter.lower()) & \
+                   (part1_series.str.lower() == cabinet_filter.lower())
+            
+            descriptions_series = part2_series[mask].dropna()
+            
+            if not descriptions_series.empty:
+                unique_descriptions = descriptions_series.unique()
+                cleaned_descriptions = [clean_text(str(c)) for c in unique_descriptions if str(c).strip()]
+            else:
+                cleaned_descriptions = []
+            
+            description_menu['values'] = cleaned_descriptions
+        except Exception as e:
+            messagebox.showerror("错误", f"更新描述选项时出错: {e}")
+            cleaned_descriptions = [] # 出错时清空
+            description_menu['values'] = cleaned_descriptions
+    else:
+        # 如果位置或柜子未选择，则清空描述选项
+        cleaned_descriptions = []
+        description_menu['values'] = cleaned_descriptions
+    
+    description_menu.set('')  # 清空下拉菜单的当前选定值
+    description_entry.delete(0, tk.END)  # 清空关联的输入框
+
 
 def on_location_menu_select(event):
     selected_location = location_choice.get()
     populate_cabinet_menu(selected_location)
     cabinet_entry.delete(0, tk.END)  # Clear cabinet_entry when location changes
+    # 当位置改变时，也应该清空描述选项，因为柜子选项会变，进而影响描述
+    description_menu['values'] = []
+    description_menu.set('')
+    description_entry.delete(0, tk.END)
 
 def on_cabinet_menu_select(event):
     selected_cabinet = cabinet_menu.get()
+    selected_location = location_choice.get()
+    # 使用选择的 location 和 cabinet 更新 description 菜单
+    # populate_description_menu 会自动使用当前的 category_entry 和 subcategory_entry 值
+    populate_description_menu(selected_location, selected_cabinet)
     cabinet_entry.delete(0, tk.END)
     cabinet_entry.insert(0, selected_cabinet)
+    # 当柜子改变时，清空已选的描述，因为描述选项已更新
+    description_menu.set('') 
+    description_entry.delete(0, tk.END)
+
+def on_description_menu_select(event):
+    selected_description = description_menu.get()
+    description_entry.delete(0, tk.END)
+    description_entry.insert(0, selected_description)
 
 def on_category_subcategory_select(event):
     selected_category = category_entry.get()
@@ -87,14 +195,26 @@ def update_cabinet_options(*args):
         for cabinet in cabinets:
             cabinet_menu['menu'].add_command(label=cabinet, command=tk._setit(cabinet_number, cabinet, set_cabinet_from_dropdown))
 
+def update_description_options(*args):
+    selected_location = location_choice.get().strip()
+    if selected_location:
+        descriptions = inventory_df[inventory_df['存放位置'].str.startswith(selected_location)]['存放位置'].apply(lambda x: x.split('-')[2]).unique()
+        description_menu['menu'].delete(0, 'end')
+        for description in descriptions:
+            description_menu['menu'].add_command(label=description, command=tk._setit(description_number, description, set_description_from_dropdown))
+
 def set_category_from_dropdown(*args):
     category_entry.delete(0, tk.END)
     category_entry.insert(0, category_choice.get())
     update_subcategory_options()
+    # 当大类改变后，也需要更新描述菜单
+    populate_description_menu(location_choice.get(), cabinet_number.get())
 
 def set_subcategory_from_dropdown(*args):
     subcategory_entry.delete(0, tk.END)
     subcategory_entry.insert(0, subcategory_choice.get())
+    # 当小类改变后，也需要更新描述菜单
+    populate_description_menu(location_choice.get(), cabinet_number.get())
     
 def set_category_from_dropdown2(*args):
     category_entry2.delete(0, tk.END)
@@ -109,6 +229,10 @@ def set_cabinet_from_dropdown(*args):
     cabinet_entry.delete(0, tk.END)
     cabinet_entry.insert(0, cabinet_number.get())
     
+def set_description_from_dropdown(*args):
+    description_entry.delete(0, tk.END)
+    description_entry.insert(0, description_number.get())
+
 def set_status_from_dropdown(*args):
     status_entry.delete(0, tk.END)
     status_entry.insert(0, status_choice.get())
@@ -175,12 +299,26 @@ def search_item_records():
             bad_items_quantity = current_inventory[current_inventory['备注'].str.lower() == '坏的']['数量'].sum()
             text.insert(tk.END, f"  其中，备注为【好的】数量: {good_items_quantity}\n")
             text.insert(tk.END, f"  其中，备注为【坏的】数量: {bad_items_quantity}\n")
+
+            # 显示物品的存放位置
+            storage_locations = current_inventory['存放位置'].unique()
+            if len(storage_locations) > 0:
+                text.insert(tk.END, f"当前物品【{item} - {subitem}】的存放位置有:\n")
+                for loc in storage_locations:
+                    if pd.notna(loc) and str(loc).strip():
+                        text.insert(tk.END, f"- {loc}\n")
+                    else:
+                        text.insert(tk.END, f"- (未指定位置)\n")
+            else:
+                text.insert(tk.END, "未找到该物品的存放位置信息。\n")
+        else:
+            text.insert(tk.END, "未在库存中找到该物品，无法显示备注和存放位置。\n")
         
 
         text.insert(tk.END, "---------------------------------------------------\n")
         text.insert(tk.END, "借还记录详情:\n")
     except Exception as e:
-        text.insert(tk.END, f"查询库存数量或备注时发生错误: {e}\n")
+        text.insert(tk.END, f"查询库存数量、备注或存放位置时发生错误: {e}\n")
         text.insert(tk.END, "---------------------------------------------------\n")
         text.insert(tk.END, "借还记录详情:\n")
     
@@ -434,6 +572,116 @@ def view_personal_records(borrower_name):
                       f"{row['借出物品大类名称']} - {row['借出物品小类名称']}: "
                       f"{row['借出物品数量']} ({row['物品状态']})\n")
 
+# 使用说明
+def show_instructions():
+    instructions_window = tk.Toplevel(root)
+    instructions_window.title("仓库管理系统使用说明")
+    instructions_window.geometry("700x600")
+    
+    # 主框架
+    main_frame = ttk.Frame(instructions_window)
+    main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+    
+    # 创建带滚动条的Canvas
+    canvas = tk.Canvas(main_frame)
+    scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+    scrollable_frame = ttk.Frame(canvas)
+    
+    scrollable_frame.bind(
+        "<Configure>",
+        lambda e: canvas.configure(
+            scrollregion=canvas.bbox("all")
+        )
+    )
+    
+    # 创建Canvas窗口
+    canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+    canvas.configure(yscrollcommand=scrollbar.set)
+    
+    # 绑定鼠标滚轮事件
+    def _on_mousewheel(event):
+        canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+    
+    canvas.bind_all("<MouseWheel>", _on_mousewheel)
+    
+    # 标题样式
+    title_style = ttk.Style()
+    title_style.configure("Title.TLabel", font=('微软雅黑', 12, 'bold'), foreground='#333333')
+    
+    # 内容样式
+    content_style = ttk.Style()
+    content_style.configure("Content.TLabel", font=('微软雅黑', 10), foreground='#555555')
+    
+    # 警告样式
+    warning_style = ttk.Style()
+    warning_style.configure("Warning.TLabel", font=('微软雅黑', 10, 'bold'), foreground='red')
+    
+    # 添加标题
+    ttk.Label(scrollable_frame, 
+             text="仓库管理系统使用指南（请连接SYSU-Hilab的wifi）", 
+             style="Title.TLabel").pack(pady=(0, 15))
+    
+    # 添加说明内容
+    sections = [
+        {
+            "title": "1. 库存管理页面",
+            "items": [
+                ("1.1 添加物品栏目", "带有下拉箭头的可以选择，选择后会自动填入。也可以手动输入，不会冲突。", "black"),
+                ("1.2 存放位置下拉菜单", "带有自动索引功能。你选择了仓库中已有的物品和位置后，会自动筛选然后给你下一个下拉菜单的选项。也可以自己写，就是新增位置。", "black"),
+                ("1.3 描述符", "是区分物品好坏的，因为涉及损坏，匹配等。物品备注随意输入，不会作为索引逻辑。", "black"),
+                ("1.4 必填项", "前六行是必须有输入的，不输入无法入库操作。", "red"),
+                ("1.5 添加物品", "输入完成后点击添加物品即可，会同步更新数据库。", "black"),
+                ("1.6 查找物品信息", "只需要输入大类别名称和子类别名称就行，是一个简化的功能。", "black")
+            ]
+        },
+        {
+            "title": "2. 借还管理页面",
+            "items": [
+                ("2.1 基本操作", "其他同上。操作描述符的时候没有下拉菜单，因为需要处理损坏情况。需要留心，所以没有涉及下拉。", "black"),
+                ("2.2 完整流程", "", "black"),
+                ("2.2.1 借出物品", "操作借还人员A借出物品。", "black"),
+                ("2.2.2 归还物品", "操作借还人员A归还物品。", "black"),
+                ("2.2.3 损坏物品", "操作借还人员B借出物品，但是B损坏物品。", "black"),
+                ("2.2.4 损坏处理", "借还借还人员B损坏物品，描述符填好的（因为是损坏了好的物品）。", "black"),
+                ("2.2.5 交付物品", "操作借还人员C借出物品，然后C交付甲方。", "black"),
+                ("2.2.6 交付处理", "借还借还人员C交付物品，描述符填具体交付的（一般不会交付坏的）。", "black"),
+                ("2.3 采购功能", "目前正在开发中，和后续报销等流程结合在一起。", "black")
+            ]
+        },
+        {
+            "title": "3. 查询功能页面",
+            "items": [
+                ("3.1 按人员查询", "可以查到某个人名下的所有物品，在手上的，损坏的，交付的等。", "black"),
+                ("3.2 数据库信息", "可以直接读取数据库信息，也即是'查看仓库总表物品详细信息'和'查看仓库总表借还记录'，功能和库存管理中的'点击查找物品信息'是一样的，更完善。", "black"),
+                ("3.3 按物品查询", "可以查找具体某个物品的详细位置和数量，包括借出归还损坏的人员信息。和库存管理中的'点击查找物品信息是一样的，更完善", "black")
+            ]
+        }
+    ]
+    
+    for section in sections:
+        # 添加章节标题
+        ttk.Label(scrollable_frame, 
+                 text=section["title"], 
+                 style="Title.TLabel").pack(pady=(10, 5), anchor='w')
+        
+        # 添加章节内容
+        for item in section["items"]:
+            style = "Warning.TLabel" if item[2] == "red" else "Content.TLabel"
+            ttk.Label(scrollable_frame, 
+                     text=f"  {item[0]}: {item[1]}", 
+                     style=style,
+                     wraplength=650,
+                     justify=tk.LEFT).pack(pady=2, anchor='w')
+    
+    # 添加底部说明
+    ttk.Label(scrollable_frame, 
+             text="\n如有任何问题，请联系系统管理员", 
+             style="Title.TLabel").pack(pady=(20, 5))
+    
+    # 布局滚动区域
+    canvas.pack(side="left", fill=tk.BOTH, expand=True)
+    scrollbar.pack(side="right", fill="y")
+
 # GUI setup
 root = tk.Tk()
 root.title("仓库管理系统-v0.2")
@@ -441,6 +689,7 @@ root.title("仓库管理系统-v0.2")
 # 初始化变量
 location_choice = tk.StringVar(value="627")
 cabinet_number = tk.StringVar(value="")
+description_number = tk.StringVar(value="")
 category_choice = tk.StringVar(value="")
 subcategory_choice = tk.StringVar(value="")
 status_choice = tk.StringVar(value="借出")
@@ -453,7 +702,7 @@ search_subitem_choice = tk.StringVar()
 borrower_choice = tk.StringVar()
 # 设置样式
 style = ttk.Style()
-style.configure('Title.TLabel', font=('Arial', 12, 'bold'))
+style.configure('Title.TLabel', font=('Arial', 13, 'bold'))
 style.configure('Header.TLabel', font=('Arial', 10))
 style.configure('Alert.TLabel', foreground='red', font=('Arial', 9))
 style.configure('Action.TButton', padding=5)
@@ -466,10 +715,25 @@ main_frame.pack(fill=tk.BOTH, expand=True)
 title_frame = ttk.Frame(main_frame)
 title_frame.pack(fill=tk.X, pady=(0, 10))
 title_label = ttk.Label(title_frame, 
-    text="仓库管理系统-给yhw点赞版", 
+    text="Hilab仓库管理系统", 
     style='Title.TLabel',
     anchor='center')
 title_label.pack(fill=tk.X)
+
+# 新增：显示用户和权限信息
+user_info_frame = ttk.Frame(main_frame) # 创建一个新的框架来容纳用户信息
+user_info_frame.pack(fill=tk.X, pady=(0, 5)) # 放置在标题下方，笔记本上方
+
+# 检查 LOGGED_IN_USER 和 USER_PERMISSION 是否有值，避免显示 None
+user_display_text = f"使用者：{LOGGED_IN_USER}" if LOGGED_IN_USER else "使用者：未登录"
+permission_display_text = f"权限：{USER_PERMISSION}" if USER_PERMISSION else "权限：未知"
+
+user_label = ttk.Label(user_info_frame,
+                       text=f"{user_display_text}  -  {permission_display_text}",
+                       style='UserInfo.TLabel', # 可以定义一个新的样式，或者使用默认
+                       anchor='center')
+user_label.pack(fill=tk.X)
+
 
 # 使用Notebook来组织不同功能区域
 notebook = ttk.Notebook(main_frame)
@@ -518,23 +782,36 @@ location_frame.pack(fill=tk.X, pady=2)
 ttk.Label(location_frame, text="存放位置（门号-柜子号-细分描述）：", 
          style='Header.TLabel', width=30).pack(side=tk.LEFT)
 
+# 创建一个新的容器来容纳两行输入控件
+inputs_container = ttk.Frame(location_frame)
+inputs_container.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+
+# 第一行输入控件
+location_row1_frame = ttk.Frame(inputs_container)
+location_row1_frame.pack(fill=tk.X)
+
 # Location Combobox
-location_combo = ttk.Combobox(location_frame, textvariable=location_choice,
+location_combo = ttk.Combobox(location_row1_frame, textvariable=location_choice,
                             values=["627", "629"], width=10, state='readonly')
-location_combo.pack(side=tk.LEFT, padx=5)
+location_combo.pack(side=tk.LEFT, padx=(0, 5)) # Adjusted padding
 
 # Cabinet Entry and Combobox
-cabinet_menu = ttk.Combobox(location_frame, width=15, state='readonly')
+cabinet_menu = ttk.Combobox(location_row1_frame, textvariable=cabinet_number, width=10, state='readonly') # Added textvariable for consistency
 cabinet_menu.pack(side=tk.LEFT, padx=5)
-cabinet_entry = ttk.Entry(location_frame, textvariable=cabinet_number, width=15)
+cabinet_entry = ttk.Entry(location_row1_frame, textvariable=cabinet_number, width=10)
 cabinet_entry.pack(side=tk.LEFT, padx=5)
 
+# 第二行输入控件
+location_row2_frame = ttk.Frame(inputs_container)
+location_row2_frame.pack(fill=tk.X, pady=(5,0)) # Add some padding on top of the second row
 
-# Description Entry
-description_entry = ttk.Entry(location_frame, width=20)
+# Description Entry and Combobox
+description_menu = ttk.Combobox(location_row2_frame, textvariable=description_number, width=13, state='readonly') # Added textvariable for consistency
+description_menu.pack(side=tk.LEFT, padx=(0, 5)) # Adjusted padding, assuming it's the first in its row
+description_entry = ttk.Entry(location_row2_frame, textvariable=description_number, width=13)
 description_entry.pack(side=tk.LEFT, padx=5)
 
-# 第五行：描述符
+# 第五行：备注和大类名称
 remark_frame = ttk.Frame(input_frame)
 remark_frame.pack(fill=tk.X, pady=2)
 ttk.Label(remark_frame, text="描述符(好的，坏的，无)：", 
@@ -570,13 +847,15 @@ ttk.Button(button_frame, text="点击添加物品",
           command=add_inventory_item, style='Action.TButton').pack(side=tk.LEFT, padx=5)
 ttk.Button(button_frame, text="点击查找物品信息", 
           command=calculate_and_display_totals, style='Action.TButton').pack(side=tk.LEFT, padx=5)
+ttk.Button(button_frame, text="管理者使用说明",
+          command=show_instructions, style='Action.TButton').pack(side=tk.LEFT, padx=5) # 修改此按钮
 
 # 警告信息
 alert_frame = ttk.Frame(input_frame)
 alert_frame.pack(fill=tk.X, pady=5)
 ttk.Label(alert_frame, text="管理员操作注意：物品先出库，再入库，最后处理损坏或交付！", 
          style='Alert.TLabel').pack(side=tk.LEFT)
-ttk.Label(alert_frame, text="前五行必须输入，不知道描述符请查看数据库或找管理员贴标签！", 
+ttk.Label(alert_frame, text="前六行必须输入，连接SYSU-HILAB能够访问NAS方可使用！", 
          style='Alert.TLabel').pack(side=tk.RIGHT)
 
 # === 借还管理标签页 ===
@@ -701,7 +980,6 @@ view_borrow_return_button = ttk.Button(view_frame, text="查看仓库总表借�
 view_borrow_return_button.pack(side=tk.LEFT, padx=5)
 
 # 查询区域2：按物品查询
-# 查询区域2：按物品查询
 search_area2 = ttk.LabelFrame(search_frame, text="按物品查询", padding="10")
 search_area2.pack(fill=tk.X, pady=(0, 10))
 
@@ -742,6 +1020,7 @@ search_item_button.pack(pady=5)
 # 绑定事件
 location_combo.bind('<<ComboboxSelected>>', on_location_menu_select)
 cabinet_menu.bind('<<ComboboxSelected>>', on_cabinet_menu_select)
+description_menu.bind('<<ComboboxSelected>>', on_description_menu_select)
 category_entry.bind("<FocusOut>", lambda event: on_category_subcategory_select(None))
 subcategory_entry.bind("<FocusOut>", lambda event: on_category_subcategory_select(None))
 category_choice.trace("w", set_category_from_dropdown)
