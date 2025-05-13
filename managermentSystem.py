@@ -5,6 +5,10 @@ import tkinter.ttk as ttk
 from tkinter import scrolledtext  # For better text display
 from datetime import datetime  # 添加这行来导入datetime
 import sys
+import uuid
+import time
+import os
+from tkinter import simpledialog
 
 # Load databases本地数据
 # inventory_db_path = 'E:\\Program\\WarehouseManageSystem\\database\\database1.xlsx'
@@ -20,12 +24,15 @@ import sys
 inventory_db_path = '//HILAB627_DS/database/database1.xlsx'
 borrow_return_db_path = '//HILAB627_DS/database/database2.xlsx'
 permissions_return_db_path = '//HILAB627_DS/database/permissions.xlsx'
-
+REQUESTS_DB_PATH = '//HILAB627_DS/database/requests.xlsx' # 新的请求文件路径
 
 # 全局变量，用于存储登录用户和权限信息
 LOGGED_IN_USER = None
 USER_PERMISSION = None
 USER_NAME = None
+current_requests_df = None # 初始化全局变量
+global requests_tree # ttk.Treeview
+
 # 在主程序启动时获取传递过来的用户名和权限
 if __name__ == "__main__":
     if len(sys.argv) == 4:  # 脚本名 + 用户名 + 权限 + 姓名
@@ -63,6 +70,312 @@ except Exception as e:
     messagebox.showerror("错误", f"加载数据库失败: {e}")
     exit()
 
+def load_requests_db():
+    try:
+        if os.path.exists(REQUESTS_DB_PATH):
+            return pd.read_excel(REQUESTS_DB_PATH, engine='openpyxl')
+        else:
+            # 如果文件不存在，管理员端可以不创建，等待用户端创建
+            # 或者也创建一个空的
+            df = pd.DataFrame(columns=['RequestID', 'Timestamp', 'Username', 'UserFullName', 
+                                       'ItemCategory', 'ItemSubcategory', 'ItemName', 'Quantity', 
+                                       'RequestType', 'AdminActionStatus', 'AdminRemarks', 
+                                       'UserNotified', 'OriginalBorrowRequestID'])
+            # df.to_excel(REQUESTS_DB_PATH, index=False, engine='openpyxl') # 可选
+            return df
+    except Exception as e:
+        messagebox.showerror("错误", f"加载请求数据库失败: {e}")
+        return None
+
+def save_requests_db(df):
+    try:
+        df.to_excel(REQUESTS_DB_PATH, index=False, engine='openpyxl')
+    except Exception as e:
+        messagebox.showerror("错误", f"保存请求数据库失败: {e}")
+
+def populate_pending_requests_tree():
+    global requests_tree, current_requests_df # 声明 current_requests_df 为全局变量
+    # 清空 Treeview
+    for i in requests_tree.get_children():
+       requests_tree.delete(i)
+    
+    current_requests_df = load_requests_db() # 将加载的数据赋值给全局变量
+    
+    if current_requests_df is None:
+        # 如果 load_requests_db 返回 None (例如加载时发生错误)
+        # 将 current_requests_df 设置为一个空的 DataFrame 以防止后续函数出错
+        current_requests_df = pd.DataFrame(columns=['RequestID', 'Timestamp', 'Username', 'UserFullName', 
+                                       'ItemCategory', 'ItemSubcategory', 'ItemName', 'Quantity', 
+                                       'RequestType', 'AdminActionStatus', 'AdminRemarks', 
+                                       'UserNotified', 'OriginalBorrowRequestID'])
+        # load_requests_db 函数内部应该已经显示了错误信息
+        return # 如果数据加载失败，则不继续填充 Treeview
+
+    # 确保 'AdminActionStatus' 列存在
+    if 'AdminActionStatus' in current_requests_df.columns:
+        pending_df = current_requests_df[current_requests_df['AdminActionStatus'] == 'Pending']
+        
+        for index, row in pending_df.iterrows():
+           requests_tree.insert("", tk.END, values=(
+               row.get('RequestID'), row.get('Timestamp'), row.get('UserFullName'), row.get('RequestType'),
+               row.get('ItemCategory'), row.get('ItemSubcategory'), row.get('ItemName'), row.get('Quantity')
+           ))
+    else:
+        # 如果DataFrame中缺少必要的列，则显示错误
+        messagebox.showerror("数据错误", "请求数据文件缺少 'AdminActionStatus' 列，无法加载待处理请求。")
+    # pass # UI填充逻辑 # 此行不再需要
+
+def approve_request():
+    global requests_tree, current_requests_df, inventory_df, borrow_return_df # 添加 inventory_df 和 borrow_return_df
+    selected_item = requests_tree.focus()
+    if not selected_item:
+        messagebox.showwarning("选择错误", "请先选择一个请求。")
+        return
+
+    selected_values = requests_tree.item(selected_item)['values']
+    request_id = selected_values[0]
+    request_type = selected_values[3]
+    item_category = selected_values[4]
+    item_subcategory = selected_values[5]
+    item_name = selected_values[6] # This is 'ItemName' from requests.xlsx, likely corresponds to '物品备注' or a unique identifier
+    quantity = int(selected_values[7])
+    user_full_name = selected_values[2] # UserFullName, corresponds to '保管人员'
+
+    remarks = simpledialog.askstring("管理员备注", "请输入批准备注 (可选):")
+    # remarks can be None if user cancels, or empty string if they don't type anything
+
+    # Find the request in current_requests_df
+    request_idx = current_requests_df[current_requests_df['RequestID'] == request_id].index
+    if request_idx.empty:
+        messagebox.showerror("错误", f"在请求列表中未找到请求ID: {request_id}")
+        return
+
+    # --- Database Update Logic based on RequestType ---
+    try:
+        if request_type == 'Borrow':
+            # Decrease inventory
+            # Find matching item in inventory_df
+            # We need to match on '大类名称', '小类名称', and '物品备注' (which is item_name here)
+            inventory_match_condition = (
+                (inventory_df['大类名称'] == item_category) &
+                (inventory_df['小类名称'] == item_subcategory) &
+                (inventory_df['备注'] == item_name) # Assuming item_name from request is the '物品备注'
+            )
+            item_in_inventory_idx = inventory_df[inventory_match_condition].index
+
+            if item_in_inventory_idx.empty:
+                messagebox.showerror("库存错误", f"未在库存中找到物品: {item_category}-{item_subcategory}, 备注: {item_name}")
+                return
+            
+            # Assuming only one such item entry, or update the first one found
+            idx_to_update = item_in_inventory_idx[0] 
+            current_quantity = inventory_df.loc[idx_to_update, '数量']
+
+            if current_quantity < quantity:
+                messagebox.showerror("库存不足", f"物品 {item_category}-{item_subcategory} ({item_name}) 库存 ({current_quantity}) 不足 {quantity}。")
+                return
+            inventory_df.loc[idx_to_update, '数量'] -= quantity
+
+            # Add to borrow_return_df
+            new_borrow_record = pd.DataFrame([{
+                '借出物品大类名称': item_category,
+                '借出物品小类名称': item_subcategory,
+                '借出物品数量': quantity,
+                '保管人员': user_full_name,
+                '物品状态': '借出', # Or 'Borrowed'
+                '备注': f"请求ID: {request_id}. {remarks if remarks else ''}", # Include admin remarks
+                '日期': datetime.now().strftime('%Y%m%d %H:%M:%S') # More precise timestamp
+            }])
+            borrow_return_df = pd.concat([borrow_return_df, new_borrow_record], ignore_index=True)
+
+        elif request_type == 'Return':
+            # Increase inventory (assuming returned item is '好的')
+            # Find matching item in inventory_df to increase its quantity
+            # We need to match on '大类名称', '小类名称', and '物品备注' (which is item_name here)
+            # And typically, '备注' should be '好的' for returned items, or we add to existing '好的' stock
+            inventory_match_condition = (
+                (inventory_df['大类名称'] == item_category) &
+                (inventory_df['小类名称'] == item_subcategory) &
+                (inventory_df['备注'] == item_name) # Assuming returns go to '好的' stock
+            )
+            item_in_inventory_idx = inventory_df[inventory_match_condition].index
+
+            if item_in_inventory_idx.empty:
+                # If no '好的' stock exists with this specific '物品备注', create a new entry or handle as error
+                # For simplicity, let's assume we find one or it's an error for now.
+                # A more robust solution might create a new inventory line if one doesn't exist.
+                messagebox.showwarning("库存警告", f"未在库存中找到物品 {item_category}-{item_subcategory} ({item_name}) 标记为 '好的'. 将尝试添加到第一个匹配项或创建新条目。")
+                # Fallback: try to find any item with same category/subcategory/item_name and add there
+                fallback_condition = (
+                    (inventory_df['大类名称'] == item_category) &
+                    (inventory_df['小类名称'] == item_subcategory) &
+                    (inventory_df['备注'] == item_name)
+                )
+                item_in_inventory_idx = inventory_df[fallback_condition].index
+                if item_in_inventory_idx.empty:
+                     messagebox.showerror("库存错误", f"无法归还：未在库存中找到物品: {item_category}-{item_subcategory}, 备注: {item_name}")
+                     return
+
+
+            idx_to_update = item_in_inventory_idx[0]
+            inventory_df.loc[idx_to_update, '数量'] += quantity
+            
+            # Add to borrow_return_df
+            new_return_record = pd.DataFrame([{
+                '借出物品大类名称': item_category,
+                '借出物品小类名称': item_subcategory,
+                '借出物品数量': quantity, # Quantity returned
+                '保管人员': user_full_name,
+                '物品状态': '归还', # Or 'Returned'
+                '备注': f"请求ID: {request_id}. {remarks if remarks else ''}",
+                '日期': datetime.now().strftime('%Y%m%d %H:%M:%S')
+            }])
+            borrow_return_df = pd.concat([borrow_return_df, new_return_record], ignore_index=True)
+
+        elif request_type == 'Deliver':
+            # Decrease inventory (similar to Borrow)
+            inventory_match_condition = (
+                (inventory_df['大类名称'] == item_category) &
+                (inventory_df['小类名称'] == item_subcategory) &
+                (inventory_df['备注'] == item_name)
+            )
+            item_in_inventory_idx = inventory_df[inventory_match_condition].index
+            if item_in_inventory_idx.empty:
+                messagebox.showerror("库存错误", f"未在库存中找到物品: {item_category}-{item_subcategory}, 备注: {item_name}")
+                return
+            idx_to_update = item_in_inventory_idx[0]
+            current_quantity = inventory_df.loc[idx_to_update, '数量']
+            if current_quantity < quantity:
+                messagebox.showerror("库存不足", f"物品 {item_category}-{item_subcategory} ({item_name}) 库存 ({current_quantity}) 不足 {quantity}。")
+                return
+            inventory_df.loc[idx_to_update, '数量'] -= quantity
+
+            # Add to borrow_return_df
+            new_deliver_record = pd.DataFrame([{
+                '借出物品大类名称': item_category,
+                '借出物品小类名称': item_subcategory,
+                '借出物品数量': quantity,
+                '保管人员': user_full_name, # Or 'N/A' if delivered out of system
+                '物品状态': '交付', # Or 'Delivered'
+                '备注': f"请求ID: {request_id}. {remarks if remarks else ''}",
+                '日期': datetime.now().strftime('%Y%m%d %H:%M:%S')
+            }])
+            borrow_return_df = pd.concat([borrow_return_df, new_deliver_record], ignore_index=True)
+
+        elif request_type == 'Damage':
+            # Decrease inventory (similar to Borrow)
+            # And potentially update the '备注' of the item in inventory_df if it's not fully depleted
+            # Or move to a '损坏品' category if you have one
+            inventory_match_condition = (
+                (inventory_df['大类名称'] == item_category) &
+                (inventory_df['小类名称'] == item_subcategory) &
+                (inventory_df['备注'] == item_name) # Assuming damage happens to '好的' items
+            )
+            item_in_inventory_idx = inventory_df[inventory_match_condition].index
+
+            if item_in_inventory_idx.empty:
+                messagebox.showerror("库存错误", f"未在库存中找到可损坏的'好的'物品: {item_category}-{item_subcategory}, 备注: {item_name}")
+                return
+
+            idx_to_update = item_in_inventory_idx[0]
+            current_quantity = inventory_df.loc[idx_to_update, '数量']
+
+            if current_quantity < quantity:
+                messagebox.showerror("库存不足", f"物品 {item_category}-{item_subcategory} ({item_name}) '好的'库存 ({current_quantity}) 不足 {quantity} 以标记为损坏。")
+                return
+            
+            inventory_df.loc[idx_to_update, '数量'] -= quantity # Reduce '好的' quantity
+
+            # Add/Update '坏的' stock for the same item
+            damaged_stock_condition = (
+                (inventory_df['大类名称'] == item_category) &
+                (inventory_df['小类名称'] == item_subcategory) &
+                (inventory_df['物品备注'] == item_name) & # Match the specific item
+                (inventory_df['备注'] == '坏的')
+            )
+            damaged_item_idx = inventory_df[damaged_stock_condition].index
+            if not damaged_item_idx.empty:
+                inventory_df.loc[damaged_item_idx[0], '数量'] += quantity
+            else: # Create new entry for '坏的' if it doesn't exist
+                new_damaged_item_details = inventory_df.loc[idx_to_update].copy() # copy details from '好的' item
+                new_damaged_item_details['数量'] = quantity
+                new_damaged_item_details['备注'] = '坏的'
+                # Ensure '存放位置' and '物品备注' are correctly copied
+                # new_damaged_item_details['存放位置'] = inventory_df.loc[idx_to_update, '存放位置']
+                # new_damaged_item_details['物品备注'] = inventory_df.loc[idx_to_update, '物品备注']
+                inventory_df = pd.concat([inventory_df, pd.DataFrame([new_damaged_item_details])], ignore_index=True)
+
+
+            # Add to borrow_return_df
+            new_damage_record = pd.DataFrame([{
+                '借出物品大类名称': item_category,
+                '借出物品小类名称': item_subcategory,
+                '借出物品数量': quantity,
+                '保管人员': user_full_name, # Person reporting damage
+                '物品状态': '损坏', # Or 'Damaged'
+                '备注': f"请求ID: {request_id}. {remarks if remarks else ''}",
+                '日期': datetime.now().strftime('%Y%m%d %H:%M:%S')
+            }])
+            borrow_return_df = pd.concat([borrow_return_df, new_damage_record], ignore_index=True)
+        
+        else:
+            messagebox.showwarning("未知请求", f"未知的请求类型: {request_type}")
+            return # Do not proceed if type is unknown
+
+        # Save updated databases
+        inventory_df.to_excel(inventory_db_path, index=False, engine='openpyxl')
+        borrow_return_df.to_excel(borrow_return_db_path, index=False, engine='openpyxl')
+        
+        # Update request status in current_requests_df
+        current_requests_df.loc[request_idx, 'AdminActionStatus'] = 'Approved'
+        current_requests_df.loc[request_idx, 'AdminRemarks'] = remarks if remarks else ''
+        # current_requests_df.loc[request_idx, 'UserNotified'] = False # Or True
+        save_requests_db(current_requests_df)
+
+        messagebox.showinfo("成功", f"请求 {request_id} ({request_type}) 已批准并处理。")
+        populate_pending_requests_tree() # Refresh the list
+
+    except Exception as e:
+        messagebox.showerror("处理错误", f"批准请求 {request_id} 时发生错误: {e}")
+        # Potentially revert changes if partial update occurred, though this is complex with Excel files
+        # For now, just log/show error. Reload data to be safe.
+        # inventory_df = pd.read_excel(inventory_db_path, engine='openpyxl') # Reload
+        # borrow_return_df = pd.read_excel(borrow_return_db_path, engine='openpyxl') # Reload
+        populate_pending_requests_tree() # Refresh to show current state
+
+def deny_request():
+    global requests_tree, current_requests_df, inventory_df, borrow_return_df # 确保 inventory_df 和 borrow_return_df 可用
+    selected_item = requests_tree.focus()
+    if not selected_item:
+       messagebox.showwarning("选择错误", "请先选择一个请求。")
+       return
+    
+    selected_values = requests_tree.item(selected_item)['values']
+    request_id = selected_values[0]
+    # request_type = selected_values[3] # RequestType
+    # item_category = selected_values[4] # ItemCategory
+    # item_subcategory = selected_values[5] # ItemSubcategory
+    # item_name = selected_values[6] # ItemName (物品备注)
+    # quantity = int(selected_values[7]) # Quantity
+    # user_full_name = selected_values[2] # UserFullName
+
+    remarks = simpledialog.askstring("管理员备注", "请输入拒绝备注 (必须):")
+    if remarks is None: # 用户取消输入
+        return
+    if not remarks.strip():
+        messagebox.showerror("错误", "拒绝备注不能为空。")
+        return
+
+    idx = current_requests_df[current_requests_df['RequestID'] == request_id].index
+    if not idx.empty:
+       current_requests_df.loc[idx, 'AdminActionStatus'] = 'Denied'
+       current_requests_df.loc[idx, 'AdminRemarks'] = remarks
+       # current_requests_df.loc[idx, 'UserNotified'] = False # 或者 True，取决于是否立即通知
+       save_requests_db(current_requests_df)
+       messagebox.showinfo("成功", f"请求 {request_id} 已拒绝。")
+       populate_pending_requests_tree() #刷新列表
+    else:
+        messagebox.showerror("错误", f"未找到请求ID: {request_id}")
 
 def clean_text(text):
     """Removes brackets and quotes from a string."""
@@ -1015,6 +1328,55 @@ search_item_button = ttk.Button(search_area2,
                                command=search_item_records,
                                style='Action.TButton')
 search_item_button.pack(pady=5)
+
+# --- Tab 5: 请求审批 (Request Approval) ---
+requests_approval_tab = ttk.Frame(notebook)
+notebook.add(requests_approval_tab, text='请求审批')
+
+# Frame for Treeview and Scrollbar
+requests_tree_frame = ttk.Frame(requests_approval_tab)
+requests_tree_frame.pack(pady=10, padx=10, fill="both", expand=True)
+
+# Treeview for requests
+requests_cols = ('RequestID', 'Timestamp', 'UserFullName', 'RequestType', 
+                 'ItemCategory', 'ItemSubcategory', 'ItemName', 'Quantity')
+requests_tree = ttk.Treeview(requests_tree_frame, columns=requests_cols, show='headings')
+
+for col in requests_cols:
+    requests_tree.heading(col, text=col)
+    if col == 'RequestID':
+        requests_tree.column(col, width=220, anchor='w')
+    elif col == 'Timestamp':
+        requests_tree.column(col, width=130, anchor='center')
+    elif col == 'UserFullName':
+        requests_tree.column(col, width=80, anchor='center')
+    elif col == 'RequestType':
+        requests_tree.column(col, width=70, anchor='center')
+    elif col == 'Quantity':
+        requests_tree.column(col, width=50, anchor='e')
+    else:
+        requests_tree.column(col, width=100, anchor='w')
+
+# Scrollbar for requests_tree
+requests_scrollbar = ttk.Scrollbar(requests_tree_frame, orient="vertical", command=requests_tree.yview)
+requests_tree.configure(yscrollcommand=requests_scrollbar.set)
+
+requests_scrollbar.pack(side="right", fill="y")
+requests_tree.pack(side="left", fill="both", expand=True)
+
+
+# Frame for buttons
+requests_buttons_frame = ttk.Frame(requests_approval_tab)
+requests_buttons_frame.pack(pady=5, fill="x")
+
+refresh_requests_button = ttk.Button(requests_buttons_frame, text="刷新列表", command=populate_pending_requests_tree)
+refresh_requests_button.pack(side=tk.LEFT, padx=5)
+
+approve_request_button = ttk.Button(requests_buttons_frame, text="批准选中项", command=approve_request)
+approve_request_button.pack(side=tk.LEFT, padx=5)
+
+deny_request_button = ttk.Button(requests_buttons_frame, text="拒绝选中项", command=deny_request)
+deny_request_button.pack(side=tk.LEFT, padx=5)
 
 
 # 绑定事件

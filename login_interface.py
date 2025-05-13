@@ -108,6 +108,11 @@ def launch_main_application(logged_in_username, user_permission, user_name): # �
         return
 
     main_app_path = os.path.join(SCRIPT_DIR, target_script_name)
+    # 添加调试信息
+    cmd_list = ['python', main_app_path, logged_in_username, user_permission, user_name]
+    print(f"DEBUG [login_interface.py]: Launching command: {cmd_list}")
+    print(f"DEBUG [login_interface.py]: Argument types: {[type(arg) for arg in cmd_list]}")
+    print(f"DEBUG [login_interface.py]: logged_in_username='{logged_in_username}', user_permission='{user_permission}', user_name='{user_name}'")
 
     try:
         # 使用 'python' 命令执行主脚本，并传递用户名和权限作为参数

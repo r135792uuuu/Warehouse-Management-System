@@ -5,6 +5,11 @@ import tkinter.ttk as ttk
 from tkinter import scrolledtext  # For better text display
 from datetime import datetime  # 添加这行来导入datetime
 import sys
+import uuid # 用于生成唯一的RequestID
+import time # 用于时间戳
+import os
+
+
 
 # Load databases本地数据
 # inventory_db_path = 'E:\\Program\\WarehouseManageSystem\\database\\database1.xlsx'
@@ -20,7 +25,7 @@ import sys
 inventory_db_path = '//HILAB627_DS/database/database1.xlsx'
 borrow_return_db_path = '//HILAB627_DS/database/database2.xlsx'
 permissions_return_db_path = '//HILAB627_DS/database/permissions.xlsx'
-
+REQUESTS_DB_PATH = '//HILAB627_DS/database/requests.xlsx' # 新的请求文件路径
 
 # 全局变量，用于存储登录用户和权限信息
 LOGGED_IN_USER = None
@@ -28,42 +33,215 @@ USER_PERMISSION = None
 USER_NAME = None
 # 在主程序启动时获取传递过来的用户名和权限
 if __name__ == "__main__":
-    if len(sys.argv) == 4:  # 脚本名 + 用户名 + 权限 + 姓名
+    # 添加调试信息
+    print(f"DEBUG [managermentSystem_user.py]: Received sys.argv: {sys.argv}")
+    print(f"DEBUG [managermentSystem_user.py]: len(sys.argv): {len(sys.argv)}")
+    if len(sys.argv) == 4:
         LOGGED_IN_USER = sys.argv[1]
         USER_PERMISSION = sys.argv[2]
         USER_NAME = sys.argv[3]
-        print(f"主程序已启动。登录用户: {LOGGED_IN_USER}, 权限: {USER_PERMISSION}, 姓名: {USER_NAME}")
-        # messagebox.showinfo("主程序已启动", f"登录用户: {LOGGED_IN_USER}, 权限: {USER_PERMISSION}, 姓名: {USER_NAME}")
-        # 你可以在这里根据 USER_PERMISSION 的值来控制程序的不同行为或界面显示
+        print(f"用户程序已启动。登录用户: {LOGGED_IN_USER}, 权限: {USER_PERMISSION}, 姓名: {USER_NAME}")
+
+        # 加载数据库
+        try:
+            inventory_df = pd.read_excel(inventory_db_path, engine='openpyxl')
+            borrow_return_df = pd.read_excel(borrow_return_db_path, engine='openpyxl')
+            # Ensure data types are consistent.  This prevents later errors.
+            inventory_df['数量'] = inventory_df['数量'].astype(int)
+            # Add similar type checking for other relevant columns as needed.
+        except FileNotFoundError:
+            messagebox.showerror("错误", "没找到数据库，请检查文件路径是否正确。")
+            #exit()
+        except pd.errors.EmptyDataError:
+            messagebox.showerror("错误", "数据库文件为空。")
+            #exit()
+        except Exception as e:
+            messagebox.showerror("错误", f"加载数据库失败: {e}")
+            #exit()
     elif len(sys.argv) == 1: # 如果直接运行 managermentSystem.py 而没有参数
         print("主程序直接启动（未传递用户信息和权限）。")
         # 此处可以添加逻辑，例如：
         # 1. 强制退出并提示需要通过登录界面启动
         messagebox.showerror("启动错误", "请通过登录界面启动程序。")
         # 2. 或者以默认用户/受限权限运行（不推荐，除非有明确场景）
-    else:
-        print("错误：传递给主应用程序的参数数量不正确。")
+    elif len(sys.argv) == 2:
+        print(f"错误：传递给主应用程序的参数数量不正确。Actual len(sys.argv) was {len(sys.argv)}") # 提供更详细的错误信息
+        l1 = sys.argv[0]
+        l2 = sys.argv[1]
+        print(f"DEBUG [managermentSystem_user.py]: l1: {l1}")
+        print(f"DEBUG [managermentSystem_user.py]: l2: {l2}")
         messagebox.showerror("启动错误", "启动参数错误。")
-        exit()
-
-# 加载数据库
-try:
-    inventory_df = pd.read_excel(inventory_db_path, engine='openpyxl')
-    borrow_return_df = pd.read_excel(borrow_return_db_path, engine='openpyxl')
-    # Ensure data types are consistent.  This prevents later errors.
-    inventory_df['数量'] = inventory_df['数量'].astype(int)
-    # Add similar type checking for other relevant columns as needed.
-except FileNotFoundError:
-    messagebox.showerror("错误", "没找到数据库，请检查文件路径是否正确。")
-    exit()
-except pd.errors.EmptyDataError:
-    messagebox.showerror("错误", "数据库文件为空。")
-    exit()
-except Exception as e:
-    messagebox.showerror("错误", f"加载数据库失败: {e}")
-    exit()
+        sys.exit()
+    else:
+        print(f"错误：传递给主应用程序的参数数量不正确。Actual len(sys.argv) was {len(sys.argv)}") # 提供更详细的错误信息
+        messagebox.showerror("启动错误", "启动参数错误。")
+        sys.exit()
 
 
+
+
+def load_requests_db():
+    try:
+        if os.path.exists(REQUESTS_DB_PATH):
+            return pd.read_excel(REQUESTS_DB_PATH, engine='openpyxl')
+        else:
+            # 如果文件不存在，创建一个空的DataFrame并保存
+            df = pd.DataFrame(columns=['RequestID', 'Timestamp', 'Username', 'UserFullName', 
+                                       'ItemCategory', 'ItemSubcategory', 'ItemName', 'Quantity', 
+                                       'RequestType', 'AdminActionStatus', 'AdminRemarks', 
+                                       'UserNotified', 'OriginalBorrowRequestID'])
+            df.to_excel(REQUESTS_DB_PATH, index=False, engine='openpyxl')
+            return df
+    except Exception as e:
+        messagebox.showerror("错误", f"加载请求数据库失败: {e}")
+        # sys.exit() # 根据用户要求，严重错误时退出
+        return None # 或者返回None，让调用者处理
+
+def save_requests_db(df):
+    try:
+        df.to_excel(REQUESTS_DB_PATH, index=False, engine='openpyxl')
+    except Exception as e:
+        messagebox.showerror("错误", f"保存请求数据库失败: {e}")
+
+# 新增：用户提交借用请求的UI处理函数
+def request_borrow_item_ui():
+    global req_category_entry, req_subcategory_entry, req_item_name_entry, req_quantity_entry # 确保可以访问这些UI元素
+    try:
+        category = req_category_entry.get().strip()
+        subcategory = req_subcategory_entry.get().strip()
+        item_name = req_item_name_entry.get().strip() # 这应该是物品的唯一标识，如 '物品备注'
+        quantity_str = req_quantity_entry.get().strip()
+
+        if not all([category, subcategory, item_name, quantity_str]):
+            messagebox.showerror("输入错误", "所有字段均为必填项。")
+            return
+        
+        quantity = int(quantity_str)
+        if quantity <= 0:
+            messagebox.showerror("输入错误", "数量必须为正整数。")
+            return
+
+        if submit_operation_request(LOGGED_IN_USER, USER_NAME, category, subcategory, item_name, quantity, 'Borrow'):
+            req_category_entry.delete(0, tk.END)
+            req_subcategory_entry.delete(0, tk.END)
+            req_item_name_entry.delete(0, tk.END)
+            req_quantity_entry.delete(0, tk.END)
+    except ValueError:
+        messagebox.showerror("输入错误", "数量必须是有效的数字。")
+    except Exception as e:
+        messagebox.showerror("操作失败", f"提交借用请求时发生错误: {e}")
+
+def submit_operation_request(username, user_full_name, item_category, item_subcategory, item_name, quantity, request_type, original_borrow_id=None):
+    """
+    用户提交归还、交付、损坏等操作请求。
+    """
+    requests_df = load_requests_db()
+    if requests_df is None:
+        return False
+
+    new_request = {
+        'RequestID': str(uuid.uuid4()),
+        'Timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'Username': username,
+        'UserFullName': user_full_name,
+        'ItemCategory': item_category,
+        'ItemSubcategory': item_subcategory,
+        'ItemName': item_name, # 确保这是物品的唯一标识符之一
+        'Quantity': quantity,
+        'RequestType': request_type, # 'Return', 'Deliver', 'Damage'
+        'AdminActionStatus': 'Pending',
+        'AdminRemarks': '',
+        'UserNotified': False,
+        'OriginalBorrowRequestID': original_borrow_id
+    }
+    # requests_df = requests_df.append(new_request, ignore_index=True) # <--- 旧代码
+    requests_df = pd.concat([requests_df, pd.DataFrame([new_request])], ignore_index=True) # <--- 修改后的代码
+    save_requests_db(requests_df)
+    messagebox.showinfo("请求已提交", f"{request_type} 请求已提交给管理员审批。")
+    return True
+
+def request_return_item_ui():
+    global req_category_entry, req_subcategory_entry, req_item_name_entry, req_quantity_entry
+    try:
+        category = req_category_entry.get().strip()
+        subcategory = req_subcategory_entry.get().strip()
+        item_name = req_item_name_entry.get().strip() 
+        quantity_str = req_quantity_entry.get().strip()
+
+        if not all([category, subcategory, item_name, quantity_str]):
+            messagebox.showerror("输入错误", "所有字段均为必填项。")
+            return
+        
+        quantity = int(quantity_str)
+        if quantity <= 0:
+            messagebox.showerror("输入错误", "数量必须为正整数。")
+            return
+        
+        if submit_operation_request(LOGGED_IN_USER, USER_NAME, category, subcategory, item_name, quantity, 'Return'):
+            req_category_entry.delete(0, tk.END)
+            req_subcategory_entry.delete(0, tk.END)
+            req_item_name_entry.delete(0, tk.END)
+            req_quantity_entry.delete(0, tk.END)
+    except ValueError:
+        messagebox.showerror("输入错误", "数量必须是有效的数字。")
+    except Exception as e:
+        messagebox.showerror("操作失败", f"提交归还请求时发生错误: {e}")
+
+def request_deliver_item_ui():
+    global req_category_entry, req_subcategory_entry, req_item_name_entry, req_quantity_entry
+    try:
+        category = req_category_entry.get().strip()
+        subcategory = req_subcategory_entry.get().strip()
+        item_name = req_item_name_entry.get().strip()
+        quantity_str = req_quantity_entry.get().strip()
+
+        if not all([category, subcategory, item_name, quantity_str]):
+            messagebox.showerror("输入错误", "所有字段均为必填项。")
+            return
+        
+        quantity = int(quantity_str)
+        if quantity <= 0:
+            messagebox.showerror("输入错误", "数量必须为正整数。")
+            return
+
+        if submit_operation_request(LOGGED_IN_USER, USER_NAME, category, subcategory, item_name, quantity, 'Deliver'):
+            req_category_entry.delete(0, tk.END)
+            req_subcategory_entry.delete(0, tk.END)
+            req_item_name_entry.delete(0, tk.END)
+            req_quantity_entry.delete(0, tk.END)
+    except ValueError:
+        messagebox.showerror("输入错误", "数量必须是有效的数字。")
+    except Exception as e:
+        messagebox.showerror("操作失败", f"提交交付请求时发生错误: {e}")
+
+
+def request_damage_item_ui():
+    global req_category_entry, req_subcategory_entry, req_item_name_entry, req_quantity_entry
+    try:
+        category = req_category_entry.get().strip()
+        subcategory = req_subcategory_entry.get().strip()
+        item_name = req_item_name_entry.get().strip()
+        quantity_str = req_quantity_entry.get().strip()
+
+        if not all([category, subcategory, item_name, quantity_str]):
+            messagebox.showerror("输入错误", "所有字段均为必填项。")
+            return
+        
+        quantity = int(quantity_str)
+        if quantity <= 0:
+            messagebox.showerror("输入错误", "数量必须为正整数。")
+            return
+        
+        if submit_operation_request(LOGGED_IN_USER, USER_NAME, category, subcategory, item_name, quantity, 'Damage'):
+            req_category_entry.delete(0, tk.END)
+            req_subcategory_entry.delete(0, tk.END)
+            req_item_name_entry.delete(0, tk.END)
+            req_quantity_entry.delete(0, tk.END)
+    except ValueError:
+        messagebox.showerror("输入错误", "数量必须是有效的数字。")
+    except Exception as e:
+        messagebox.showerror("操作失败", f"提交损坏请求时发生错误: {e}")
+        
 def clean_text(text):
     """Removes brackets and quotes from a string."""
     text = str(text)  # Handle potential non-string types
@@ -261,13 +439,41 @@ def update_search_subitem_options(*args):
     if selected_item:
         try:
             subitems = inventory_df[inventory_df['大类名称'] == selected_item]['小类名称'].unique()
-            search_subitem_menu['menu'].delete(0, 'end')
+            # 注意：下面这行在您提供的代码中似乎被截断了 (search_subitem_m...)
+            # 请确保它是完整的，例如：search_subitem_menu['menu'].delete(0, 'end')
+            search_subitem_menu['menu'].delete(0, 'end') # 假设这是正确的代码，如果不是请根据您的原意修改
+            if 'values' in search_subitem_menu.config(): # 检查是否为Combobox或类似控件
+                 search_subitem_menu['values'] = []
+
             for subitem in subitems:
-                search_subitem_menu['menu'].add_command(
-                    label=subitem, 
-                    command=tk._setit(search_subitem_choice, subitem, set_search_subitem_from_dropdown))
+                if isinstance(search_subitem_menu, ttk.Combobox):
+                    current_values = list(search_subitem_menu['values'])
+                    current_values.append(subitem)
+                    search_subitem_menu['values'] = current_values
+                elif isinstance(search_subitem_menu, tk.OptionMenu): # 假设是OptionMenu
+                     search_subitem_menu['menu'].add_command(label=subitem, command=tk._setit(search_subitem_choice, subitem, set_search_subitem_from_dropdown))
+            
+            if isinstance(search_subitem_menu, ttk.Combobox) and subitems.size > 0 :
+                search_subitem_menu.current(0) # 默认选择第一个
+            elif isinstance(search_subitem_menu, tk.OptionMenu) and subitems.size > 0:
+                 search_subitem_choice.set(subitems[0]) # 默认选择第一个
+            else: # 如果没有子项，清空
+                if isinstance(search_subitem_menu, ttk.Combobox):
+                    search_subitem_menu.set('')
+                elif isinstance(search_subitem_menu, tk.OptionMenu):
+                    search_subitem_choice.set('')
+
         except Exception as e:
-            messagebox.showerror("Error", f"更新子类别选项时出错: {e}")
+            messagebox.showerror("错误", f"更新小类查询选项时出错: {e}")
+            if 'values' in search_subitem_menu.config():
+                search_subitem_menu['values'] = []
+            search_subitem_menu.set('')
+    else:
+        if 'values' in search_subitem_menu.config():
+            search_subitem_menu['values'] = []
+        search_subitem_menu.set('')
+        search_subitem_entry.delete(0, tk.END)
+
 
 def search_item_records():
     item = search_item_entry.get().strip()
@@ -388,6 +594,10 @@ def view_borrow_return():
 
 def add_inventory_item():
     global inventory_df
+    # 权限检查
+    if USER_PERMISSION != '管理员':
+        messagebox.showerror("权限错误", "您没有权限执行此操作。")
+        return
     try:
         category = category_entry.get().strip().lower()
         subcategory = subcategory_entry.get().strip().lower()
@@ -440,8 +650,6 @@ def add_inventory_item():
             messagebox.showinfo("成功", "物品已添加/更新，并且数据库已刷新。") # Updated success message
         except Exception as e:
             messagebox.showerror("错误", f"成功保存物品，但刷新数据库时出错: {e}")
-
-
     except ValueError as e:
         messagebox.showerror("Error", f"Invalid input: {e}")
     except Exception as e:
@@ -681,6 +889,258 @@ def show_instructions():
     canvas.pack(side="left", fill=tk.BOTH, expand=True)
     scrollbar.pack(side="right", fill="y")
 
+
+# --- 处理管理员审批后的操作 ---
+def process_approved_action(request_id, request_type, category, subcategory, item_name, quantity, username_of_requester):
+    global inventory_df, borrow_return_df
+    try:
+        # 标记：这里 item_name 应该是能唯一识别 database1.xlsx 中物品的关键信息
+        # 例如 '物品名称' 或 '描述符'
+        
+        # Flow 2: 用户归还物品 (管理员同意后)
+        if request_type == 'Return':
+            # 1. 增加 database1.xlsx 中对应物品的数量
+            match_condition_inv = (inventory_df['大类名称'] == category) & \
+                                  (inventory_df['小类名称'] == subcategory) & \
+                                  (inventory_df['物品名称'] == item_name) # 假设 '物品名称'
+            if not inventory_df[match_condition_inv].empty:
+                item_idx_inv = inventory_df[match_condition_inv].index[0]
+                inventory_df.loc[item_idx_inv, '数量'] += quantity
+            else:
+                messagebox.showerror("错误", f"归还失败：未在库存中找到物品 {item_name}")
+                return
+
+            # 2. 在 database2.xlsx 中添加归还记录或更新状态
+            #    减少该用户名下的这个物品对应的数量 (通过添加'归还'记录实现)
+            new_return_entry = {
+                '借出物品大类名称': category,
+                '借出物品小类名称': subcategory,
+                '借出物品名称': item_name,
+                '借出物品数量': quantity, # 归还的数量
+                '保管人员': username_of_requester, # 这里的username_of_requester应为UserFullName
+                '用户名': LOGGED_IN_USER, # 或者从request中获取请求者用户名
+                '物品状态': '归还',
+                '备注': f'管理员批准归还，RequestID: {request_id}',
+                '日期': datetime.now().strftime('%Y%m%d'),
+                'RequestID': request_id # 使用原始请求ID
+            }
+            borrow_return_df = borrow_return_df.append(new_return_entry, ignore_index=True)
+            messagebox.showinfo("成功", "物品归还成功！")
+
+        # Flow 3: 用户直接从仓库交付 (管理员同意后)
+        elif request_type == 'Deliver':
+            # 1. 减少 database1.xlsx 中对应物品的数量
+            match_condition_inv = (inventory_df['大类名称'] == category) & \
+                                  (inventory_df['小类名称'] == subcategory) & \
+                                  (inventory_df['物品名称'] == item_name)
+            if not inventory_df[match_condition_inv].empty:
+                item_idx_inv = inventory_df[match_condition_inv].index[0]
+                if inventory_df.loc[item_idx_inv, '数量'] >= quantity:
+                    inventory_df.loc[item_idx_inv, '数量'] -= quantity
+                else:
+                    messagebox.showerror("错误", f"交付失败：库存不足 {item_name}")
+                    return
+            else:
+                messagebox.showerror("错误", f"交付失败：未在库存中找到物品 {item_name}")
+                return
+            
+            # 2. 在 database2.xlsx 中记录交付
+            new_deliver_entry = {
+                '借出物品大类名称': category,
+                '借出物品小类名称': subcategory,
+                '借出物品名称': item_name,
+                '借出物品数量': quantity, # 交付的数量
+                '保管人员': username_of_requester,
+                '用户名': LOGGED_IN_USER,
+                '物品状态': '交付',
+                '备注': f'管理员批准直接交付，RequestID: {request_id}',
+                '日期': datetime.now().strftime('%Y%m%d'),
+                'RequestID': request_id
+            }
+            borrow_return_df = borrow_return_df.append(new_deliver_entry, ignore_index=True)
+            messagebox.showinfo("成功", "物品交付成功！")
+        
+        # Flow 4: 用户借出后再交付 (管理员同意后)
+        #   - 仓库数量在借出时已减少，此处无需再动 database1.xlsx
+        #   - 主要是在 database2.xlsx 中将原 '借出' 记录的状态更新或新增 '交付' 记录
+        #   - 用户的描述是 "直接将记录在该用户名下的这个物品属性改为交付，该用户名下的这个物品拥有数量减去对应数量，交付的物品数量加上对应数量"
+        #   - 这意味着我们需要找到原始的 '借出' 记录，或者更简单地是添加一条新的 '交付' 记录，
+        #     并在计算用户持有量时，'交付' 同样视为减少持有。
+        #     为了审计和清晰，建议添加新的 '交付' 记录。
+        #     如果需要严格对应原借出记录，则需要 `OriginalBorrowRequestID`。
+        #     当前实现与Flow 3类似，只是database1.xlsx不操作。
+        #     若要区分，可以在submit_operation_request时传递一个标志，或根据物品是否已在用户借出名下判断。
+        #     为简化，此处假设 'Deliver' 请求总是指从仓库直接出，或用户选择已借出的物品进行交付时，
+        #     UI会传递正确的上下文。如果物品已借出，则不操作database1。
+        #     一个更健壮的做法是，交付请求应指明是“新交付”还是“从已借出转交付”。
+        #     当前代码按“新交付”处理，如果物品已借出，则需要调整逻辑，例如不减库存。
+
+        # Flow 5: 损坏操作 (管理员同意后)
+        elif request_type == 'Damage':
+            # 逻辑类似交付，减少库存 (如果是直接报损)，并在 database2.xlsx 中记录
+            # 1. 减少 database1.xlsx 中对应物品的数量 (如果物品在库房)
+            #    如果物品是用户已借出的，则不操作 database1.xlsx
+            #    需要UI传递上下文或在请求中包含此信息
+            match_condition_inv = (inventory_df['大类名称'] == category) & \
+                                  (inventory_df['小类名称'] == subcategory) & \
+                                  (inventory_df['物品名称'] == item_name)
+            if not inventory_df[match_condition_inv].empty:
+                item_idx_inv = inventory_df[match_condition_inv].index[0]
+                if inventory_df.loc[item_idx_inv, '数量'] >= quantity: # 假设损坏的是库存品
+                    inventory_df.loc[item_idx_inv, '数量'] -= quantity
+                # else: # 如果是用户已借出的物品报损，则不应出现库存不足
+                #    pass 
+            # else:
+                # pass # 如果是用户已借出的物品报损，库存中可能没有（或不应操作）
+            
+            # 2. 在 database2.xlsx 中记录损坏
+            new_damage_entry = {
+                '借出物品大类名称': category,
+                '借出物品小类名称': subcategory,
+                '借出物品名称': item_name,
+                '借出物品数量': quantity, # 损坏的数量
+                '保管人员': username_of_requester,
+                '用户名': LOGGED_IN_USER,
+                '物品状态': '损坏',
+                '备注': f'管理员批准报损，RequestID: {request_id}',
+                '日期': datetime.now().strftime('%Y%m%d'),
+                'RequestID': request_id
+            }
+            borrow_return_df = borrow_return_df.append(new_damage_entry, ignore_index=True)
+            messagebox.showinfo("成功", "物品损坏记录成功！")
+
+        save_databases() # 保存所有更改
+
+        # 更新请求状态为已通知用户
+        requests_df = load_requests_db()
+        if requests_df is not None:
+            req_idx = requests_df[requests_df['RequestID'] == request_id].index
+            if not req_idx.empty:
+                requests_df.loc[req_idx, 'UserNotified'] = True
+                save_requests_db(requests_df)
+
+    except Exception as e:
+        messagebox.showerror("错误", f"处理已批准的 {request_type} 操作时发生错误: {e}")
+
+def check_pending_requests_status():
+    """
+    定期检查用户提交的请求是否有管理员的审批结果。
+    """
+    requests_df = load_requests_db()
+    if requests_df is None:
+        return
+
+    user_pending_requests = requests_df[
+        (requests_df['Username'] == LOGGED_IN_USER) & 
+        (requests_df['AdminActionStatus'].isin(['Approved', 'Denied'])) & 
+        (requests_df['UserNotified'] == False)
+    ]
+
+    for index, req in user_pending_requests.iterrows():
+        if req['AdminActionStatus'] == 'Approved':
+            messagebox.showinfo("请求批准", f"您的 {req['RequestType']} 请求 (ID: {req['RequestID']}) 已被管理员批准。")
+            # 调用实际处理函数
+            process_approved_action(req['RequestID'], req['RequestType'], req['ItemCategory'], 
+                                    req['ItemSubcategory'], req['ItemName'], req['Quantity'], 
+                                    req['UserFullName'])
+        elif req['AdminActionStatus'] == 'Denied':
+            messagebox.showwarning("请求被拒", f"您的 {req['RequestType']} 请求 (ID: {req['RequestID']}) 已被管理员拒绝。备注: {req['AdminRemarks']}")
+            # 更新 UserNotified 状态
+            idx = requests_df[requests_df['RequestID'] == req['RequestID']].index
+            requests_df.loc[idx, 'UserNotified'] = True
+    
+    if not user_pending_requests.empty:
+        save_requests_db(requests_df) # 保存 UserNotified 的更改
+
+    # 在Tkinter主循环中重复调用此函数
+    # root.after(30000, check_pending_requests_status) # 例如每30秒检查一次
+
+# ... existing code ...
+
+# 在程序启动时或GUI构建后，启动定时检查
+# if USER_PERMISSION == "user": # 只为普通用户启动
+#    root.after(5000, check_pending_requests_status) # 首次检查延迟5秒
+
+# 你需要在你的GUI中添加按钮来触发 request_return_item_ui, request_deliver_item_ui, request_damage_item_ui
+# 以及修改现有的借出流程调用 process_borrow_item
+
+# 确保有一个 save_databases() 函数
+def save_databases():
+    global inventory_df, borrow_return_df
+    try:
+        inventory_df.to_excel(inventory_db_path, index=False, engine='openpyxl')
+        borrow_return_df.to_excel(borrow_return_db_path, index=False, engine='openpyxl')
+        # messagebox.showinfo("成功", "数据库已保存。") # 可选：频繁保存时此提示可能过多
+    except Exception as e:
+        messagebox.showerror("错误", f"保存数据库失败: {e}")
+        # sys.exit() # 根据用户要求，严重错误时退出
+# 新增：周期性检查用户请求状态的函数
+def check_pending_requests_status_periodic():
+    """
+    周期性检查当前登录用户的请求状态，并在有更新时通知用户。
+    """
+    global root # 需要访问全局的 root 窗口对象以进行 rescheduling
+    
+    if LOGGED_IN_USER is None:
+        print("DEBUG: LOGGED_IN_USER is None, skipping periodic check.")
+        # 即使没有登录用户，也应该重新安排下一次检查，以防后续登录
+        if 'root' in globals() and root.winfo_exists(): # 检查 root 是否已定义且窗口存在
+            root.after(300000, check_pending_requests_status_periodic) # 5分钟后再次检查
+        return
+
+    try:
+        requests_df = load_requests_db()
+        if requests_df is None or requests_df.empty:
+            # print(f"DEBUG: No requests data found for user {LOGGED_IN_USER}.")
+            if 'root' in globals() and root.winfo_exists():
+                root.after(300000, check_pending_requests_status_periodic) # 重新安排
+            return
+
+        # 筛选当前用户未被通知的、且管理员已处理的请求
+        # AdminActionStatus 可能的值: 'Pending', 'Approved', 'Rejected', 'Completed' (根据您的系统设计)
+        # UserNotified 应该是布尔值 True/False
+        user_requests_to_notify = requests_df[
+            (requests_df['Username'] == LOGGED_IN_USER) &
+            (requests_df['UserNotified'] == False) &
+            (requests_df['AdminActionStatus'] != 'Pending') # 管理员已处理
+        ]
+
+        if not user_requests_to_notify.empty:
+            notification_messages = []
+            for index, row in user_requests_to_notify.iterrows():
+                message = (
+                    f"您的请求 '{row['RequestType']}' (物品: {row.get('ItemName', 'N/A')}, "
+                    f"数量: {row.get('Quantity', 'N/A')}) "
+                    f"已被管理员处理，状态: {row['AdminActionStatus']}."
+                )
+                if pd.notna(row['AdminRemarks']) and str(row['AdminRemarks']).strip():
+                    message += f" 管理员备注: {row['AdminRemarks']}"
+                
+                notification_messages.append(message)
+                
+                # 更新为已通知
+                requests_df.loc[index, 'UserNotified'] = True
+            
+            if notification_messages:
+                messagebox.showinfo("请求状态更新", "\n\n".join(notification_messages))
+                save_requests_db(requests_df) # 保存更新后的 UserNotified 状态
+
+    except Exception as e:
+        print(f"Error in check_pending_requests_status_periodic: {e}")
+        # 不在此处显示 messagebox，避免过多弹窗，错误记录在控制台即可
+
+    finally:
+        # 无论如何，都重新安排下一次检查
+        # 确保 root 仍然存在 (例如，用户可能已经关闭了窗口)
+        if 'root' in globals() and root.winfo_exists():
+            root.after(300000, check_pending_requests_status_periodic) # 例如，每5分钟检查一次 (300000毫秒)
+
+global root, category_choice, subcategory_choice, location_choice, cabinet_number, description_number, status_choice, remark_choice, borrower_choice, search_item_choice, search_subitem_choice
+global category_entry, subcategory_entry, location_entry, cabinet_entry, description_entry, quantity_entry, status_entry, remark_entry, borrower_entry, search_item_entry, search_subitem_entry
+global subcategory_menu, cabinet_menu, description_menu, search_subitem_menu
+# 新增请求操作相关的UI元素
+global req_category_entry, req_subcategory_entry, req_item_name_entry, req_quantity_entry
+
 # GUI setup
 root = tk.Tk()
 root.title("仓库管理系统-v0.2")
@@ -731,16 +1191,16 @@ permission_display_text = f"权限：{USER_PERMISSION}" if USER_PERMISSION else 
 combined_info_text = f"{user_display_text}  -  {permission_display_text}"
 
 info_label = ttk.Label(user_info_frame,
-                       text=combined_info_text,
-                       style='UserInfo.TLabel', # 可以定义一个新的样式，或者使用默认
-                       anchor='center')
+                    text=combined_info_text,
+                    style='UserInfo.TLabel', # 可以定义一个新的样式，或者使用默认
+                    anchor='center')
 info_label.pack(fill=tk.X)
 
 # 新增：使用说明按钮
 # 确保 show_instructions 函数在您的代码中已经定义
 instructions_button = ttk.Button(user_info_frame,
-                                 text="查看使用说明",
-                                 command=show_instructions) # 绑定到 show_instructions 函数
+                                text="查看使用说明",
+                                command=show_instructions) # 绑定到 show_instructions 函数
 instructions_button.pack(pady=(5,0)) # 在用户信息下方添加一些垂直间距
 
 
@@ -760,7 +1220,7 @@ borrow_frame.pack(fill=tk.X, pady=(0, 10))
 borrower_frame = ttk.Frame(borrow_frame)
 borrower_frame.pack(fill=tk.X, pady=2)
 ttk.Label(borrower_frame, text="借还人员：", 
-         style='Header.TLabel', width=30).pack(side=tk.LEFT)
+        style='Header.TLabel', width=30).pack(side=tk.LEFT)
 # borrower_entry = ttk.Entry(borrower_frame, width=30)
 # borrower_entry.pack(side=tk.LEFT, padx=5)
 
@@ -778,7 +1238,7 @@ ttk.Label(borrower_frame, text=user_name_display,style='Header.TLabel').pack(sid
 status_frame = ttk.Frame(borrow_frame)
 status_frame.pack(fill=tk.X, pady=2)
 ttk.Label(status_frame, text="借还状态：", 
-         style='Header.TLabel', width=30).pack(side=tk.LEFT)
+        style='Header.TLabel', width=30).pack(side=tk.LEFT)
 status_entry = ttk.Entry(status_frame, width=30)
 status_entry.pack(side=tk.LEFT, padx=5)
 
@@ -794,25 +1254,25 @@ status_choice.trace("w", update_status_entry)
 #                            "默认","借出", "归还", "交付", "采购", "损坏")
 # 增加防御，用户只保留借出。后续将和仓库借出表格对比实现更智慧的方法
 status_menu = ttk.OptionMenu(status_frame, status_choice, 
-                           "借出")
+                        "借出")
 status_menu.pack(side=tk.LEFT)
 
 # 第三行：大类别名称
 category2_frame = ttk.Frame(borrow_frame)
 category2_frame.pack(fill=tk.X, pady=2)
 ttk.Label(category2_frame, text="大类别名称：", 
-         style='Header.TLabel', width=30).pack(side=tk.LEFT)
+        style='Header.TLabel', width=30).pack(side=tk.LEFT)
 category_entry2 = ttk.Entry(category2_frame, width=30)
 category_entry2.pack(side=tk.LEFT, padx=5)
 category_menu2 = ttk.OptionMenu(category2_frame, category_choice2, "",
-                              *sorted(inventory_df['大类名称'].unique()))
+                            *sorted(inventory_df['大类名称'].unique()))
 category_menu2.pack(side=tk.LEFT)
 
 # 第四行：子类别名称
 subcategory2_frame = ttk.Frame(borrow_frame)
 subcategory2_frame.pack(fill=tk.X, pady=2)
 ttk.Label(subcategory2_frame, text="子类别名称：", 
-         style='Header.TLabel', width=30).pack(side=tk.LEFT)
+        style='Header.TLabel', width=30).pack(side=tk.LEFT)
 subcategory_entry2 = ttk.Entry(subcategory2_frame, width=30)
 subcategory_entry2.pack(side=tk.LEFT, padx=5)
 subcategory_menu2 = ttk.OptionMenu(subcategory2_frame, subcategory_choice2, "")
@@ -822,7 +1282,7 @@ subcategory_menu2.pack(side=tk.LEFT)
 quantity2_frame = ttk.Frame(borrow_frame)
 quantity2_frame.pack(fill=tk.X, pady=2)
 ttk.Label(quantity2_frame, text="数量：", 
-         style='Header.TLabel', width=30).pack(side=tk.LEFT)
+        style='Header.TLabel', width=30).pack(side=tk.LEFT)
 quantity_entry2 = ttk.Entry(quantity2_frame, width=30)
 quantity_entry2.pack(side=tk.LEFT, padx=5)
 
@@ -830,13 +1290,13 @@ quantity_entry2.pack(side=tk.LEFT, padx=5)
 remark2_frame = ttk.Frame(borrow_frame)
 remark2_frame.pack(fill=tk.X, pady=2)
 ttk.Label(remark2_frame, text="描述符（好的，坏的，旧版本，默认输入好的）：", 
-         style='Header.TLabel', width=30).pack(side=tk.LEFT)
+        style='Header.TLabel', width=30).pack(side=tk.LEFT)
 remark_entry2 = ttk.Entry(remark2_frame, width=30)
 remark_entry2.pack(side=tk.LEFT, padx=5)
 
 # 更新按钮
 update_button = ttk.Button(borrow_frame, text="点击更新数据库", 
-                         command=update_databases, style='Action.TButton')
+                        command=update_databases, style='Action.TButton')
 update_button.pack(pady=10)
 
 # === 查询功能标签页 ===
@@ -851,11 +1311,11 @@ search_area.pack(fill=tk.X, pady=(0, 10))
 search_input_frame = ttk.Frame(search_area)
 search_input_frame.pack(fill=tk.X, pady=5)
 ttk.Label(search_input_frame, text="输入人员姓名：", 
-         style='Header.TLabel').pack(side=tk.LEFT)
+        style='Header.TLabel').pack(side=tk.LEFT)
 search_entry = ttk.Entry(search_input_frame, width=30)
 search_entry.pack(side=tk.LEFT, padx=5)
 search_button = ttk.Button(search_input_frame, text="查找名下物品", 
-                         command=search_borrower_items, style='Action.TButton')
+                        command=search_borrower_items, style='Action.TButton')
 search_button.pack(side=tk.LEFT, padx=5)
 
 # 添加查看个人借还记录按钮
@@ -868,7 +1328,7 @@ view_personal_button.pack(side=tk.LEFT, padx=5)
 view_frame = ttk.Frame(search_area)
 view_frame.pack(fill=tk.X, pady=10)
 view_button = ttk.Button(view_frame, text="查看仓库总表物品详细信息", 
-                       command=view_inventory, style='Action.TButton')
+                    command=view_inventory, style='Action.TButton')
 view_button.pack(side=tk.LEFT, padx=5)
 view_borrow_return_button = ttk.Button(view_frame, text="查看仓库总表借还记录", 
                                     command=view_borrow_return, style='Action.TButton')
@@ -882,20 +1342,20 @@ search_area2.pack(fill=tk.X, pady=(0, 10))
 search_item_frame = ttk.Frame(search_area2)
 search_item_frame.pack(fill=tk.X, pady=2)
 ttk.Label(search_item_frame, text="物品大类：", 
-         style='Header.TLabel', width=15).pack(side=tk.LEFT)
+        style='Header.TLabel', width=15).pack(side=tk.LEFT)
 search_item_entry = ttk.Entry(search_item_frame, width=30)
 search_item_entry.pack(side=tk.LEFT, padx=5)
 search_item_menu = ttk.OptionMenu(search_item_frame, 
-                                 search_item_choice, "",
-                                 *sorted(inventory_df['大类名称'].unique()),
-                                 command=set_search_item_from_dropdown)
+                                search_item_choice, "",
+                                *sorted(inventory_df['大类名称'].unique()),
+                                command=set_search_item_from_dropdown)
 search_item_menu.pack(side=tk.LEFT, padx=5)
 
 # 第二行：物品子类
 search_subitem_frame = ttk.Frame(search_area2)
 search_subitem_frame.pack(fill=tk.X, pady=2)
 ttk.Label(search_subitem_frame, text="物品子类：", 
-         style='Header.TLabel', width=15).pack(side=tk.LEFT)
+        style='Header.TLabel', width=15).pack(side=tk.LEFT)
 search_subitem_entry = ttk.Entry(search_subitem_frame, width=30)
 search_subitem_entry.pack(side=tk.LEFT, padx=5)
 search_subitem_menu = ttk.OptionMenu(search_subitem_frame, 
@@ -906,10 +1366,51 @@ search_subitem_menu.pack(side=tk.LEFT, padx=5)
 
 # 搜索按钮
 search_item_button = ttk.Button(search_area2, 
-                               text="搜索物品", 
-                               command=search_item_records,
-                               style='Action.TButton')
+                            text="搜索物品", 
+                            command=search_item_records,
+                            style='Action.TButton')
 search_item_button.pack(pady=5)
+
+
+# --- 新增：操作请求标签页 ---
+requests_op_tab = ttk.Frame(notebook)
+notebook.add(requests_op_tab, text='操作请求')
+
+# Frame for request inputs
+request_input_frame = ttk.LabelFrame(requests_op_tab, text="请求信息")
+request_input_frame.pack(padx=10, pady=10, fill="x")
+
+ttk.Label(request_input_frame, text="物品大类:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+req_category_entry = ttk.Entry(request_input_frame, width=30)
+req_category_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+
+ttk.Label(request_input_frame, text="物品小类:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+req_subcategory_entry = ttk.Entry(request_input_frame, width=30)
+req_subcategory_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+
+ttk.Label(request_input_frame, text="物品名称/备注:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
+req_item_name_entry = ttk.Entry(request_input_frame, width=30) # 物品的唯一标识，如序列号或详细备注
+req_item_name_entry.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
+ttk.Label(request_input_frame, text="(对应库存中的'物品备注')").grid(row=2, column=2, padx=5, pady=5, sticky="w")
+
+
+ttk.Label(request_input_frame, text="数量:").grid(row=3, column=0, padx=5, pady=5, sticky="w")
+req_quantity_entry = ttk.Entry(request_input_frame, width=10)
+req_quantity_entry.grid(row=3, column=1, padx=5, pady=5, sticky="w")
+
+request_input_frame.columnconfigure(1, weight=1) # Make entry widgets expandable
+
+# Frame for request buttons
+request_buttons_frame = ttk.Frame(requests_op_tab)
+request_buttons_frame.pack(padx=10, pady=10, fill="x")
+
+ttk.Button(request_buttons_frame, text="申请借用", command=request_borrow_item_ui).pack(side=tk.LEFT, padx=5, pady=5)
+ttk.Button(request_buttons_frame, text="申请归还", command=request_return_item_ui).pack(side=tk.LEFT, padx=5, pady=5)
+ttk.Button(request_buttons_frame, text="申请交付", command=request_deliver_item_ui).pack(side=tk.LEFT, padx=5, pady=5)
+ttk.Button(request_buttons_frame, text="申请报损", command=request_damage_item_ui).pack(side=tk.LEFT, padx=5, pady=5)
+
+# --- 结束：操作请求标签页 ---
+
 
 
 # 绑定事件
@@ -932,5 +1433,7 @@ search_subitem_entry.bind("<Return>", lambda event: search_item_records())
 # 为菜单选项绑定事件
 search_item_menu.bind('<Button-1>', lambda event: update_search_subitem_options())
 
+# 启动定时器检查请求状态
+root.after(5000, check_pending_requests_status_periodic) # 启动周期性检查
 # 启动主循环
 root.mainloop()
