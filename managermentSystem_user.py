@@ -436,20 +436,48 @@ def search_borrower_items():
     if borrower_records.empty:
         text.insert(tk.END, f"没有找到这个人： {borrower_name}.\n")
     else:
-        current_count = {}
-        delivered_count = {}
-        damaged_count = {}
+        current_count = {}  # 当前借出的物品
+        delivered_count = {}  # 已交付的物品
+        damaged_count = {}  # 已损坏的物品
+        remark_count = {}  # 存储不同备注的物品数量
+        admin_remarks_count = {}  # 存储不同管理员审批备注的物品数量
+
+        # 加载请求数据库以获取管理员备注
+        requests_df = load_requests_db()
 
         for index, row in borrower_records.iterrows():
-            category = row['借出物品大类名称']  # Get the category name
+            category = row['借出物品大类名称']
             subcategory = row['借出物品小类名称']
             quantity = row['借出物品数量']
             status = row['物品状态']
+            remark = row.get('备注', '无备注')  # 获取物品备注信息
 
-            item_key = (category, subcategory) # Use a tuple as key to store both category and subcategory
+            item_key = (category, subcategory)
 
+            # 更新物品状态计数
             if status == '借出':
                 current_count[item_key] = current_count.get(item_key, 0) + quantity
+                # 更新备注计数
+                if item_key not in remark_count:
+                    remark_count[item_key] = {}
+                remark_count[item_key][remark] = remark_count[item_key].get(remark, 0) + quantity
+
+                # 查找并统计管理员审批备注
+                if requests_df is not None and not requests_df.empty:
+                    matching_requests = requests_df[
+                        (requests_df['Username'] == borrower_name) &
+                        (requests_df['ItemCategory'] == category) &
+                        (requests_df['ItemSubcategory'] == subcategory) &
+                        (requests_df['AdminActionStatus'] != 'Pending')
+                    ]
+                    if not matching_requests.empty:
+                        if item_key not in admin_remarks_count:
+                            admin_remarks_count[item_key] = {}
+                        for _, req in matching_requests.iterrows():
+                            if pd.notna(req['AdminRemarks']):
+                                admin_remark = req['AdminRemarks']
+                                admin_remarks_count[item_key][admin_remark] = admin_remarks_count[item_key].get(admin_remark, 0) + req['Quantity']
+
             elif status == '归还':
                 current_count[item_key] = current_count.get(item_key, 0) - quantity
             elif status == '交付':
@@ -457,28 +485,44 @@ def search_borrower_items():
             elif status == '损坏':
                 damaged_count[item_key] = damaged_count.get(item_key, 0) + quantity
 
-        # Display results.  Format output to include category.
         def format_item(count, category, subcategory):
             return f"{count} 个 {category}-{subcategory}"
 
-        # Filter out items with current_count of 0
-        current_items = ", ".join([
-            format_item(count, category, subcategory)
-            for (category, subcategory), count in current_count.items()
-            if count >= 1  # Only include items with count >= 1
-        ])
+        # 显示当前借出的物品及其详细信息
+        for (category, subcategory), count in current_count.items():
+            if count >= 1:
+                text.insert(tk.END, f"\n当前名下物品还有：{category}-{subcategory}\n")
+                text.insert(tk.END, f"  总数量：{count} 个\n")
+                
+                # 显示不同备注的物品数量
+                if (category, subcategory) in remark_count:
+                    text.insert(tk.END, "  详细备注信息：\n")
+                    for remark, remark_quantity in remark_count[(category, subcategory)].items():
+                        text.insert(tk.END, f"    - {remark}: {remark_quantity} 个\n")
+                
+                # 显示不同管理员审批备注的物品数量
+                if (category, subcategory) in admin_remarks_count:
+                    text.insert(tk.END, "  管理员审批备注统计：\n")
+                    for admin_remark, admin_quantity in admin_remarks_count[(category, subcategory)].items():
+                        text.insert(tk.END, f"    - {admin_remark}: {admin_quantity} 个\n")
+                
+                text.insert(tk.END, "-------------------\n")
+
+        # 显示已交付的物品
         delivered_items = ", ".join([
             format_item(count, category, subcategory)
             for (category, subcategory), count in delivered_count.items()
         ])
+        if delivered_items:
+            text.insert(tk.END, f"\n已交付物品：{delivered_items}。\n")
+
+        # 显示已损坏的物品
         damaged_items = ", ".join([
             format_item(count, category, subcategory)
             for (category, subcategory), count in damaged_count.items()
         ])
-
-        text.insert(tk.END, f"当前名下还有：{current_items}。\n")
-        text.insert(tk.END, f"交付：{delivered_items}。\n")
-        text.insert(tk.END, f"损坏：{damaged_items}。\n")
+        if damaged_items:
+            text.insert(tk.END, f"\n已损坏物品：{damaged_items}。\n")
 
 def view_personal_records(borrower_name):
     if not refresh_database():
