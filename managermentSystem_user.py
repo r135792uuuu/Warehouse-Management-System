@@ -289,40 +289,13 @@ def update_search_subitem_options(*args):
     if selected_item:
         try:
             subitems = inventory_df[inventory_df['大类名称'] == selected_item]['小类名称'].unique()
-            # 注意：下面这行在您提供的代码中似乎被截断了 (search_subitem_m...)
-            # 请确保它是完整的，例如：search_subitem_menu['menu'].delete(0, 'end')
-            search_subitem_menu['menu'].delete(0, 'end') # 假设这是正确的代码，如果不是请根据您的原意修改
-            if 'values' in search_subitem_menu.config(): # 检查是否为Combobox或类似控件
-                 search_subitem_menu['values'] = []
-
+            search_subitem_menu['menu'].delete(0, 'end')
             for subitem in subitems:
-                if isinstance(search_subitem_menu, ttk.Combobox):
-                    current_values = list(search_subitem_menu['values'])
-                    current_values.append(subitem)
-                    search_subitem_menu['values'] = current_values
-                elif isinstance(search_subitem_menu, tk.OptionMenu): # 假设是OptionMenu
-                     search_subitem_menu['menu'].add_command(label=subitem, command=tk._setit(search_subitem_choice, subitem, set_search_subitem_from_dropdown))
-            
-            if isinstance(search_subitem_menu, ttk.Combobox) and subitems.size > 0 :
-                search_subitem_menu.current(0) # 默认选择第一个
-            elif isinstance(search_subitem_menu, tk.OptionMenu) and subitems.size > 0:
-                 search_subitem_choice.set(subitems[0]) # 默认选择第一个
-            else: # 如果没有子项，清空
-                if isinstance(search_subitem_menu, ttk.Combobox):
-                    search_subitem_menu.set('')
-                elif isinstance(search_subitem_menu, tk.OptionMenu):
-                    search_subitem_choice.set('')
-
+                search_subitem_menu['menu'].add_command(
+                    label=subitem, 
+                    command=tk._setit(search_subitem_choice, subitem, set_search_subitem_from_dropdown))
         except Exception as e:
-            messagebox.showerror("错误", f"更新小类查询选项时出错: {e}")
-            if 'values' in search_subitem_menu.config():
-                search_subitem_menu['values'] = []
-            search_subitem_menu.set('')
-    else:
-        if 'values' in search_subitem_menu.config():
-            search_subitem_menu['values'] = []
-        search_subitem_menu.set('')
-        search_subitem_entry.delete(0, tk.END)
+            messagebox.showerror("Error", f"更新子类别选项时出错: {e}")
 
 
 def search_item_records():
@@ -1025,20 +998,20 @@ search_area2.pack(fill=tk.X, pady=(0, 10))
 search_item_frame = ttk.Frame(search_area2)
 search_item_frame.pack(fill=tk.X, pady=2)
 ttk.Label(search_item_frame, text="物品大类：", 
-        style='Header.TLabel', width=15).pack(side=tk.LEFT)
+         style='Header.TLabel', width=15).pack(side=tk.LEFT)
 search_item_entry = ttk.Entry(search_item_frame, width=30)
 search_item_entry.pack(side=tk.LEFT, padx=5)
 search_item_menu = ttk.OptionMenu(search_item_frame, 
-                                search_item_choice, "",
-                                *sorted(inventory_df['大类名称'].unique()),
-                                command=set_search_item_from_dropdown)
+                                 search_item_choice, "",
+                                 *sorted(inventory_df['大类名称'].unique()),
+                                 command=set_search_item_from_dropdown)
 search_item_menu.pack(side=tk.LEFT, padx=5)
 
 # 第二行：物品子类
 search_subitem_frame = ttk.Frame(search_area2)
 search_subitem_frame.pack(fill=tk.X, pady=2)
 ttk.Label(search_subitem_frame, text="物品子类：", 
-        style='Header.TLabel', width=15).pack(side=tk.LEFT)
+         style='Header.TLabel', width=15).pack(side=tk.LEFT)
 search_subitem_entry = ttk.Entry(search_subitem_frame, width=30)
 search_subitem_entry.pack(side=tk.LEFT, padx=5)
 search_subitem_menu = ttk.OptionMenu(search_subitem_frame, 
