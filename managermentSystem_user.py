@@ -10,7 +10,6 @@ import time # 用于时间戳
 import os
 
 
-
 # Load databases本地数据
 # inventory_db_path = 'E:\\Program\\WarehouseManageSystem\\database\\database1.xlsx'
 # borrow_return_db_path = 'E:\\Program\\WarehouseManageSystem\\database\\database2.xlsx'
@@ -164,34 +163,267 @@ def submit_operation_request(username, user_full_name, item_category, item_subca
         'UserNotified': False,
         'OriginalBorrowRequestID': original_borrow_id
     }
-    # requests_df = requests_df.append(new_request, ignore_index=True) # <--- 旧代码
-    requests_df = pd.concat([requests_df, pd.DataFrame([new_request])], ignore_index=True) # <--- 修改后的代码
+    requests_df = pd.concat([requests_df, pd.DataFrame([new_request])], ignore_index=True)
     save_requests_db(requests_df)
     messagebox.showinfo("请求已提交", f"{request_type} 请求已提交给管理员审批。")
     return True
 
 def request_return_item_ui():
     global req_category_entry, req_subcategory_entry, req_item_name_entry, req_quantity_entry
+    
+    # 获取当前输入的物品信息
+    category = req_category_entry.get().strip()
+    subcategory = req_subcategory_entry.get().strip()
+    item_name = req_item_name_entry.get().strip() 
+    quantity_str = req_quantity_entry.get().strip()
+    
+    if not all([category, subcategory, item_name, quantity_str]):
+        messagebox.showerror("输入错误", "所有字段均为必填项。")
+        return
+    
     try:
-        category = req_category_entry.get().strip()
-        subcategory = req_subcategory_entry.get().strip()
-        item_name = req_item_name_entry.get().strip() 
-        quantity_str = req_quantity_entry.get().strip()
-
-        if not all([category, subcategory, item_name, quantity_str]):
-            messagebox.showerror("输入错误", "所有字段均为必填项。")
-            return
-        
         quantity = int(quantity_str)
         if quantity <= 0:
             messagebox.showerror("输入错误", "数量必须为正整数。")
             return
         
-        if submit_operation_request(LOGGED_IN_USER, USER_NAME, category, subcategory, item_name, quantity, 'Return'):
-            req_category_entry.delete(0, tk.END)
-            req_subcategory_entry.delete(0, tk.END)
-            req_item_name_entry.delete(0, tk.END)
-            req_quantity_entry.delete(0, tk.END)
+        # 创建归还子页面
+        return_window = tk.Toplevel(root)
+        return_window.title(f"申请归还 - {category}-{subcategory}")
+        return_window.geometry("800x600")
+        
+        # 创建框架来显示物品信息
+        info_frame = ttk.Frame(return_window, padding=10)
+        info_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(info_frame, text=f"物品大类: {category}").grid(row=0, column=0, sticky="w", padx=5, pady=2)
+        ttk.Label(info_frame, text=f"物品小类: {subcategory}").grid(row=1, column=0, sticky="w", padx=5, pady=2)
+        ttk.Label(info_frame, text=f"物品名称/备注: {item_name}").grid(row=2, column=0, sticky="w", padx=5, pady=2)
+        ttk.Label(info_frame, text=f"归还数量: {quantity}").grid(row=3, column=0, sticky="w", padx=5, pady=2)
+        
+        # 创建文本框用于显示用户名下物品信息
+        items_frame = ttk.LabelFrame(return_window, text="您名下的物品", padding=10)
+        items_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        items_text = scrolledtext.ScrolledText(items_frame)
+        items_text.pack(fill=tk.BOTH, expand=True)
+        
+        # 创建框架用于输入原始借出请求ID
+        id_frame = ttk.Frame(return_window, padding=10)
+        id_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(id_frame, text="原始借出请求ID:").pack(side=tk.LEFT, padx=5)
+        original_id_entry = ttk.Entry(id_frame, width=40)
+        original_id_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        
+        # 创建按钮框架
+        button_frame = ttk.Frame(return_window, padding=10)
+        button_frame.pack(fill=tk.X, pady=5)
+        
+        # 定义查看名下物品函数
+        def view_user_items():
+            items_text.delete(1.0, tk.END)
+            if not refresh_database():
+                return
+                
+            # 查询用户名下物品
+            borrower_records = borrow_return_df[borrow_return_df['保管人员'] == USER_NAME]
+            
+            if borrower_records.empty:
+                items_text.insert(tk.END, f"没有找到您名下的物品记录。\n")
+                return
+                
+            current_count = {}  # 当前借出的物品
+            remark_count = {}  # 存储不同备注的物品数量
+            admin_remarks_count = {}  # 存储不同管理员审批备注的物品数量
+            request_ids = {}  # 存储请求ID和对应的物品信息
+            
+            # 加载请求数据库以获取管理员备注
+            requests_df = load_requests_db()
+            
+            for index, row in borrower_records.iterrows():
+                cat = row['借出物品大类名称']
+                subcat = row['借出物品小类名称']
+                qty = row['借出物品数量']
+                status = row['物品状态']
+                remark = row.get('备注', '无备注')
+                
+                item_key = (cat, subcat)
+                
+                # 更新物品状态计数
+                if status == '借出':
+                    current_count[item_key] = current_count.get(item_key, 0) + qty
+                    # 更新备注计数
+                    if item_key not in remark_count:
+                        remark_count[item_key] = {}
+                    remark_count[item_key][remark] = remark_count[item_key].get(remark, 0) + qty
+                    
+                    # 查找并统计管理员审批备注和请求ID
+                    if requests_df is not None and not requests_df.empty:
+                        matching_requests = requests_df[
+                            (requests_df['Username'] == LOGGED_IN_USER) &
+                            (requests_df['ItemCategory'] == cat) &
+                            (requests_df['ItemSubcategory'] == subcat) &
+                            (requests_df['AdminActionStatus'] == 'Approved') &
+                            (requests_df['RequestType'] == 'Borrow')
+                        ]
+                        
+                        if not matching_requests.empty:
+                            if item_key not in admin_remarks_count:
+                                admin_remarks_count[item_key] = {}
+                                request_ids[item_key] = {}
+                                
+                            for _, req in matching_requests.iterrows():
+                                if pd.notna(req['AdminRemarks']):
+                                    admin_remark = req['AdminRemarks']
+                                    req_id = req['RequestID']
+                                    req_qty = req['Quantity']
+                                    
+                                    # 检查这个请求ID是否已经被部分归还
+                                    returned_qty = 0
+                                    return_requests = requests_df[
+                                        (requests_df['OriginalBorrowRequestID'] == req_id) &
+                                        (requests_df['RequestType'] == 'Return') &
+                                        (requests_df['AdminActionStatus'] == 'Approved')
+                                    ]
+                                    
+                                    if not return_requests.empty:
+                                        for _, ret_req in return_requests.iterrows():
+                                            returned_qty += ret_req['Quantity']
+                                    
+                                    # 计算剩余数量
+                                    remaining_qty = req_qty - returned_qty
+                                    
+                                    if remaining_qty > 0:
+                                        admin_remarks_count[item_key][admin_remark] = admin_remarks_count[item_key].get(admin_remark, 0) + remaining_qty
+                                        request_ids[item_key][req_id] = {
+                                            'remark': admin_remark,
+                                            'quantity': remaining_qty,
+                                            'item_name': req['ItemName']
+                                        }
+                
+                elif status == '归还':
+                    current_count[item_key] = current_count.get(item_key, 0) - qty
+            
+            # 显示当前借出的物品及其详细信息
+            items_text.insert(tk.END, "=== 您名下的物品 ===\n\n")
+            
+            # 检查是否有与当前要归还的物品匹配的记录
+            target_key = (category, subcategory)
+            if target_key in current_count and current_count[target_key] > 0:
+                items_text.insert(tk.END, f"【匹配的物品】 {category}-{subcategory}\n")
+                
+                # 显示不同管理员审批备注的物品数量和请求ID
+                if target_key in admin_remarks_count:
+                    
+                    if target_key in request_ids:
+                        items_text.insert(tk.END, "  具体请求ID与数量 (匹配当前物品名称)：\n")
+                        found_specific_requests = False
+                        for req_id, info in request_ids[target_key].items():
+                            if info['item_name'] == item_name:  # item_name 是当前归还操作选择的物品名称/备注
+                                items_text.insert(tk.END, f"    - ID {req_id}: {info['remark']} ({info['quantity']}个)\n")
+                                found_specific_requests = True
+                        if not found_specific_requests:
+                            items_text.insert(tk.END, f"    (无特定备注记录与物品名称 '{item_name}' 匹配)\n")
+                    
+                    # 显示请求ID和添加复制按钮
+                    items_text.insert(tk.END, "\n  请求ID列表 (点击按钮复制到归还ID框)：\n")
+                    
+                    id_buttons_frame = ttk.Frame(items_frame)
+                    items_text.window_create(tk.END, window=id_buttons_frame)
+                    items_text.insert(tk.END, "\n")
+                    
+                    row_idx = 0
+                    col_idx = 0
+                    
+                    for req_id, info in request_ids[target_key].items():
+                        if info['item_name'] == item_name:  # 只显示与当前选择的物品名称/备注匹配的ID
+                            id_label = ttk.Label(id_buttons_frame, text=f"{req_id} ({info['remark']}: {info['quantity']}个)")
+                            id_label.grid(row=row_idx, column=col_idx, padx=5, pady=2, sticky="w")
+                            
+                            copy_button = ttk.Button(
+                                id_buttons_frame, 
+                                text="选择", 
+                                command=lambda rid=req_id: original_id_entry.delete(0, tk.END) or original_id_entry.insert(0, rid)
+                            )
+                            copy_button.grid(row=row_idx, column=col_idx+1, padx=5, pady=2)
+                            
+                            row_idx += 1
+                            if row_idx > 5:  # 每列最多显示6个按钮
+                                row_idx = 0
+                                col_idx += 2
+                
+                items_text.insert(tk.END, "\n-------------------\n\n")
+            
+            # 显示其他借出的物品
+            for (cat, subcat), count in current_count.items():
+                if count >= 1 and (cat, subcat) != target_key:
+                    items_text.insert(tk.END, f"其他名下物品：{cat}-{subcat}\n")
+                    items_text.insert(tk.END, f"  总数量：{count} 个\n")
+                    items_text.insert(tk.END, "-------------------\n")
+        
+        # 定义提交归还请求函数
+        def submit_return():
+            original_id = original_id_entry.get().strip()
+            
+            if not original_id:
+                messagebox.showerror("输入错误", "请输入原始借出请求ID。")
+                return
+            
+            # 验证原始ID是否存在且有效
+            requests_df = load_requests_db()
+            if requests_df is None:
+                return
+                
+            original_request = requests_df[
+                (requests_df['RequestID'] == original_id) &
+                (requests_df['RequestType'] == 'Borrow') &
+                (requests_df['AdminActionStatus'] == 'Approved')
+            ]
+            
+            if original_request.empty:
+                messagebox.showerror("ID错误", "未找到有效的原始借出请求ID。")
+                return
+            
+            # 检查归还数量是否超过原始借出数量
+            original_qty = original_request.iloc[0]['Quantity']
+            
+            # 查找已归还的数量
+            returned_qty = 0
+            return_requests = requests_df[
+                (requests_df['OriginalBorrowRequestID'] == original_id) &
+                (requests_df['RequestType'] == 'Return') &
+                (requests_df['AdminActionStatus'] == 'Approved')
+            ]
+            
+            if not return_requests.empty:
+                for _, ret_req in return_requests.iterrows():
+                    returned_qty += ret_req['Quantity']
+            
+            remaining_qty = original_qty - returned_qty
+            
+            if quantity > remaining_qty:
+                messagebox.showerror("数量错误", f"归还数量 ({quantity}) 超过了该请求ID下剩余的物品数量 ({remaining_qty})。")
+                return
+            
+            # 提交归还请求
+            if submit_operation_request(LOGGED_IN_USER, USER_NAME, category, subcategory, item_name, quantity, 'Return', original_id):
+                messagebox.showinfo("请求已提交", "归还请求已提交给管理员审批。")
+                # 清空主界面的输入框
+                req_category_entry.delete(0, tk.END)
+                req_subcategory_entry.delete(0, tk.END)
+                req_item_name_entry.delete(0, tk.END)
+                req_quantity_entry.delete(0, tk.END)
+                # 关闭子窗口
+                return_window.destroy()
+        
+        # 添加按钮
+        ttk.Button(button_frame, text="刷新数据", command=view_user_items).pack(side=tk.LEFT, padx=10)
+        ttk.Button(button_frame, text="提交归还请求", command=submit_return).pack(side=tk.RIGHT, padx=10)
+        
+        # 自动执行查看名下物品
+        view_user_items()
+        
     except ValueError:
         messagebox.showerror("输入错误", "数量必须是有效的数字。")
     except Exception as e:
@@ -223,7 +455,6 @@ def request_deliver_item_ui():
         messagebox.showerror("输入错误", "数量必须是有效的数字。")
     except Exception as e:
         messagebox.showerror("操作失败", f"提交交付请求时发生错误: {e}")
-
 
 def request_damage_item_ui():
     global req_category_entry, req_subcategory_entry, req_item_name_entry, req_quantity_entry
@@ -429,100 +660,154 @@ def search_borrower_items():
     search_window.title(f"Items borrowed by {borrower_name}")
     text = tk.Text(search_window)
     text.pack()
+    
+    # 调用新的函数来处理查询逻辑
+    search_borrower_items_logic(borrower_name, text)
 
-    # Filter records for the specified borrower
+def search_borrower_items_logic(borrower_name, text):
+    """查询指定借用人名下的物品"""
+    if not refresh_database():
+        return
+        
+    text.delete(1.0, tk.END)
+    
+    # 查询指定借用人的借还记录
     borrower_records = borrow_return_df[borrow_return_df['保管人员'] == borrower_name]
-
+    
     if borrower_records.empty:
-        text.insert(tk.END, f"没有找到这个人： {borrower_name}.\n")
-    else:
-        current_count = {}  # 当前借出的物品
-        delivered_count = {}  # 已交付的物品
-        damaged_count = {}  # 已损坏的物品
-        remark_count = {}  # 存储不同备注的物品数量
-        admin_remarks_count = {}  # 存储不同管理员审批备注的物品数量
-
-        # 加载请求数据库以获取管理员备注
-        requests_df = load_requests_db()
-
-        for index, row in borrower_records.iterrows():
-            category = row['借出物品大类名称']
-            subcategory = row['借出物品小类名称']
-            quantity = row['借出物品数量']
-            status = row['物品状态']
-            remark = row.get('备注', '无备注')  # 获取物品备注信息
-
-            item_key = (category, subcategory)
-
-            # 更新物品状态计数
-            if status == '借出':
-                current_count[item_key] = current_count.get(item_key, 0) + quantity
-                # 更新备注计数
-                if item_key not in remark_count:
-                    remark_count[item_key] = {}
-                remark_count[item_key][remark] = remark_count[item_key].get(remark, 0) + quantity
-
-                # 查找并统计管理员审批备注
-                if requests_df is not None and not requests_df.empty:
-                    matching_requests = requests_df[
-                        (requests_df['Username'] == borrower_name) &
-                        (requests_df['ItemCategory'] == category) &
-                        (requests_df['ItemSubcategory'] == subcategory) &
-                        (requests_df['AdminActionStatus'] != 'Pending')
-                    ]
-                    if not matching_requests.empty:
-                        if item_key not in admin_remarks_count:
-                            admin_remarks_count[item_key] = {}
-                        for _, req in matching_requests.iterrows():
-                            if pd.notna(req['AdminRemarks']):
-                                admin_remark = req['AdminRemarks']
-                                admin_remarks_count[item_key][admin_remark] = admin_remarks_count[item_key].get(admin_remark, 0) + req['Quantity']
-
-            elif status == '归还':
-                current_count[item_key] = current_count.get(item_key, 0) - quantity
-            elif status == '交付':
-                delivered_count[item_key] = delivered_count.get(item_key, 0) + quantity
-            elif status == '损坏':
-                damaged_count[item_key] = damaged_count.get(item_key, 0) + quantity
-
-        def format_item(count, category, subcategory):
-            return f"{count} 个 {category}-{subcategory}"
-
-        # 显示当前借出的物品及其详细信息
-        for (category, subcategory), count in current_count.items():
-            if count >= 1:
-                text.insert(tk.END, f"\n当前名下物品还有：{category}-{subcategory}\n")
-                text.insert(tk.END, f"  总数量：{count} 个\n")
+        text.insert(tk.END, f"没有找到 {borrower_name} 名下的借出物品记录。\n")
+        return
+        
+    # 初始化各种计数字典
+    current_count = {}  # 当前借出的物品
+    delivered_count = {}  # 已交付的物品
+    damaged_count = {}  # 已损坏的物品
+    remark_count = {}  # 存储不同备注的物品数量
+    admin_remarks_count = {}  # 存储不同管理员审批备注的物品数量
+    request_ids_by_item = {}  # 存储请求ID和对应的物品信息
+    
+    # 加载请求数据库以获取管理员备注
+    requests_df = load_requests_db()
+    if requests_df is None:
+        text.insert(tk.END, "错误：无法加载请求数据库。\n")
+        return
+    
+    # 处理借用人的每条记录
+    for index, row in borrower_records.iterrows():
+        cat = row['借出物品大类名称']
+        subcat = row['借出物品小类名称']
+        qty = row['借出物品数量']
+        status = row['物品状态']
+        remark = row.get('备注', '无备注')
+        
+        item_key = (cat, subcat)
+        
+        # 更新物品状态计数
+        if status == '借出':
+            current_count[item_key] = current_count.get(item_key, 0) + qty
+            # 更新备注计数
+            if item_key not in remark_count:
+                remark_count[item_key] = {}
+            remark_count[item_key][remark] = remark_count[item_key].get(remark, 0) + qty
+            
+            # 查找并统计管理员审批备注和请求ID
+            if requests_df is not None and not requests_df.empty:
+                matching_requests = requests_df[
+                    (requests_df['Username'] == borrower_name) &  # 使用传入的借用人名称，而不是LOGGED_IN_USER
+                    (requests_df['ItemCategory'] == cat) &
+                    (requests_df['ItemSubcategory'] == subcat) &
+                    (requests_df['AdminActionStatus'] == 'Approved') &
+                    (requests_df['RequestType'] == 'Borrow')
+                ]
                 
-                # 显示不同备注的物品数量
-                if (category, subcategory) in remark_count:
-                    text.insert(tk.END, "  详细备注信息：\n")
-                    for remark, remark_quantity in remark_count[(category, subcategory)].items():
-                        text.insert(tk.END, f"    - {remark}: {remark_quantity} 个\n")
-                
-                # 显示不同管理员审批备注的物品数量
-                if (category, subcategory) in admin_remarks_count:
-                    text.insert(tk.END, "  管理员审批备注统计：\n")
-                    for admin_remark, admin_quantity in admin_remarks_count[(category, subcategory)].items():
-                        text.insert(tk.END, f"    - {admin_remark}: {admin_quantity} 个\n")
-                
-                text.insert(tk.END, "-------------------\n")
+                if not matching_requests.empty:
+                    if item_key not in admin_remarks_count:
+                        admin_remarks_count[item_key] = {}
+                        request_ids_by_item[item_key] = {}
+                        
+                    for _, req in matching_requests.iterrows():
+                        if pd.notna(req['AdminRemarks']):
+                            admin_remark = req['AdminRemarks']
+                            req_id = req['RequestID']
+                            req_qty = req['Quantity']
+                            
+                            # 检查这个请求ID是否已经被部分归还
+                            returned_qty = 0
+                            return_requests = requests_df[
+                                (requests_df['OriginalBorrowRequestID'] == req_id) &
+                                (requests_df['RequestType'] == 'Return') &
+                                (requests_df['AdminActionStatus'] == 'Approved')
+                            ]
+                            
+                            if not return_requests.empty:
+                                for _, ret_req in return_requests.iterrows():
+                                    returned_qty += ret_req['Quantity']
+                            
+                            # 计算剩余数量
+                            remaining_qty = req_qty - returned_qty
+                            
+                            if remaining_qty > 0:
+                                admin_remarks_count[item_key][admin_remark] = admin_remarks_count[item_key].get(admin_remark, 0) + remaining_qty
+                                request_ids_by_item[item_key][req_id] = {
+                                    'remark': admin_remark,
+                                    'quantity': remaining_qty,
+                                    'item_name': req['ItemName']
+                                }
+        elif status == '归还':
+            current_count[item_key] = current_count.get(item_key, 0) - qty
+        elif status == '交付':
+            delivered_count[item_key] = delivered_count.get(item_key, 0) + qty
+        elif status == '损坏':
+            damaged_count[item_key] = damaged_count.get(item_key, 0) + qty
 
-        # 显示已交付的物品
-        delivered_items = ", ".join([
-            format_item(count, category, subcategory)
-            for (category, subcategory), count in delivered_count.items()
-        ])
-        if delivered_items:
-            text.insert(tk.END, f"\n已交付物品：{delivered_items}。\n")
-
-        # 显示已损坏的物品
-        damaged_items = ", ".join([
-            format_item(count, category, subcategory)
-            for (category, subcategory), count in damaged_count.items()
-        ])
-        if damaged_items:
-            text.insert(tk.END, f"\n已损坏物品：{damaged_items}。\n")
+    # 显示当前借出的物品及其详细信息
+    text.insert(tk.END, f"--- {borrower_name} 名下的物品 ---\n\n")
+    
+    # 显示当前借出的物品及其详细信息
+    for (category, subcategory), count in current_count.items():
+        if count >= 1:
+            text.insert(tk.END, f"大类: {category}, 小类: {subcategory}\n")
+            text.insert(tk.END, f"  总数量: {count} 个\n")
+            
+            # 显示不同备注的物品数量
+            if (category, subcategory) in remark_count:
+                text.insert(tk.END, "  详细备注信息：\n")
+                for remark, remark_quantity in remark_count[(category, subcategory)].items():
+                    text.insert(tk.END, f"    - {remark}: {remark_quantity} 个\n")
+            
+            # 显示管理员审批备注统计
+            item_key_for_admin_remarks = (category, subcategory)
+            if item_key_for_admin_remarks in admin_remarks_count:
+                text.insert(tk.END, "  管理员审批备注统计：\n")
+                for admin_remark, admin_quantity in admin_remarks_count[item_key_for_admin_remarks].items():
+                    text.insert(tk.END, f"    - {admin_remark}: {admin_quantity} 个\n")
+                
+                # 显示匹配当前物品名称的具体请求ID与数量
+                item_key_for_req_ids = (category, subcategory)
+                if item_key_for_req_ids in request_ids_by_item:
+                    for remark in remark_count[item_key_for_req_ids].keys():
+                        text.insert(tk.END, f"  具体请求ID与数量 (匹配物品名称 '{remark}')：\n")
+                        found_specific_requests = False
+                        for req_id, info in request_ids_by_item[item_key_for_req_ids].items():
+                            if info['item_name'] == remark:
+                                text.insert(tk.END, f"    - ID {req_id}: {info['remark']} ({info['quantity']}个)\n")
+                                found_specific_requests = True
+                        if not found_specific_requests:
+                            text.insert(tk.END, f"    (无特定备注记录与物品名称 '{remark}' 匹配)\n")
+            
+            text.insert(tk.END, "\n------------------------------------\n\n")
+    
+    # 显示已交付的物品
+    if delivered_count:
+        text.insert(tk.END, "\n已交付物品：\n")
+        for (category, subcategory), count in delivered_count.items():
+            text.insert(tk.END, f"  {count} 个 {category}-{subcategory}\n")
+    
+    # 显示已损坏的物品
+    if damaged_count:
+        text.insert(tk.END, "\n已损坏物品：\n")
+        for (category, subcategory), count in damaged_count.items():
+            text.insert(tk.END, f"  {count} 个 {category}-{subcategory}\n")
 
 def view_personal_records(borrower_name):
     if not refresh_database():

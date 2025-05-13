@@ -1396,24 +1396,24 @@ requests_tree_frame = ttk.Frame(requests_approval_tab)
 requests_tree_frame.pack(pady=10, padx=10, fill="both", expand=True)
 
 # Treeview for requests
-requests_cols = ('RequestID', 'Timestamp', 'UserFullName', 'RequestType', 
-                 'ItemCategory', 'ItemSubcategory', 'ItemName', 'Quantity')
+requests_cols = ('ID', '时间', '姓名', '借还类型', 
+                 '物品大类', '物品小类', '描述符', '数量')
 requests_tree = ttk.Treeview(requests_tree_frame, columns=requests_cols, show='headings')
 
 for col in requests_cols:
     requests_tree.heading(col, text=col)
-    if col == 'RequestID':
-        requests_tree.column(col, width=220, anchor='w')
-    elif col == 'Timestamp':
-        requests_tree.column(col, width=130, anchor='center')
-    elif col == 'UserFullName':
-        requests_tree.column(col, width=80, anchor='center')
-    elif col == 'RequestType':
-        requests_tree.column(col, width=70, anchor='center')
-    elif col == 'Quantity':
+    if col == 'ID':
+        requests_tree.column(col, width=50, anchor='w')
+    elif col == '时间':
+        requests_tree.column(col, width=60, anchor='center')
+    elif col == '姓名':
+        requests_tree.column(col, width=60, anchor='center')
+    elif col == '借还类型':
+        requests_tree.column(col, width=50, anchor='center')
+    elif col == '数量':
         requests_tree.column(col, width=50, anchor='e')
     else:
-        requests_tree.column(col, width=100, anchor='w')
+        requests_tree.column(col, width=50, anchor='w')
 
 # Scrollbar for requests_tree
 requests_scrollbar = ttk.Scrollbar(requests_tree_frame, orient="vertical", command=requests_tree.yview)
