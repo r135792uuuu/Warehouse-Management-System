@@ -78,7 +78,17 @@ if __name__ == "__main__":
         sys.exit()
 
 
-
+def refresh_database():
+    """刷新所有数据库"""
+    try:
+        global inventory_df, borrow_return_df
+        inventory_df = pd.read_excel(inventory_db_path, engine='openpyxl')
+        borrow_return_df = pd.read_excel(borrow_return_db_path, engine='openpyxl')
+        inventory_df['数量'] = inventory_df['数量'].astype(int)
+        return True
+    except Exception as e:
+        messagebox.showerror("数据库刷新错误", f"刷新数据库时发生错误: {e}")
+        return False
 
 def load_requests_db():
     try:
@@ -262,167 +272,7 @@ def populate_cabinet_menu(location):
     else:
         cabinet_menu['values'] = []
 
-def populate_description_menu(location_filter, cabinet_filter):
-    """Populates the description_menu based on the selected category, subcategory, location and cabinet."""
-    # 获取当前选择的大类和小类 (来自用于添加入库的输入框)
-    current_category = category_entry.get().strip().lower()
-    current_subcategory = subcategory_entry.get().strip().lower()
 
-    # 复制一份 DataFrame 以免修改原始数据
-    filtered_df = inventory_df.copy()
-
-    # 1. 根据大类筛选
-    if current_category:
-        filtered_df = filtered_df[filtered_df['大类名称'].str.lower() == current_category]
-
-    # 2. 根据小类筛选 (在已按大类筛选的基础上)
-    if current_subcategory:
-        filtered_df = filtered_df[filtered_df['小类名称'].str.lower() == current_subcategory]
-
-    # 3. 根据位置和柜子筛选描述
-    if location_filter and cabinet_filter:
-        try:
-            # 确保 '存放位置' 列是字符串类型，便于处理
-            # 从已经按 category/subcategory 筛选过的 filtered_df 中提取存放位置信息
-            parts = filtered_df['存放位置'].astype(str).str.split('-', n=2, expand=True)
-            
-            # expand=True 会创建新的列，如果分割数不足，则后续列为 None
-            # 我们需要确保 parts 有足够的列，或者在访问前检查
-            part0_series = parts[0] if 0 in parts.columns else pd.Series(dtype='str')
-            part1_series = parts[1] if 1 in parts.columns else pd.Series(dtype='str')
-            part2_series = parts[2] if 2 in parts.columns else pd.Series(dtype='str')
-
-            # 创建筛选条件：第一部分匹配 location_filter 且 第二部分匹配 cabinet_filter
-            mask = (part0_series.str.lower() == location_filter.lower()) & \
-                   (part1_series.str.lower() == cabinet_filter.lower())
-            
-            descriptions_series = part2_series[mask].dropna()
-            
-            if not descriptions_series.empty:
-                unique_descriptions = descriptions_series.unique()
-                cleaned_descriptions = [clean_text(str(c)) for c in unique_descriptions if str(c).strip()]
-            else:
-                cleaned_descriptions = []
-            
-            description_menu['values'] = cleaned_descriptions
-        except Exception as e:
-            messagebox.showerror("错误", f"更新描述选项时出错: {e}")
-            cleaned_descriptions = [] # 出错时清空
-            description_menu['values'] = cleaned_descriptions
-    else:
-        # 如果位置或柜子未选择，则清空描述选项
-        cleaned_descriptions = []
-        description_menu['values'] = cleaned_descriptions
-    
-    description_menu.set('')  # 清空下拉菜单的当前选定值
-    description_entry.delete(0, tk.END)  # 清空关联的输入框
-
-
-def on_location_menu_select(event):
-    selected_location = location_choice.get()
-    populate_cabinet_menu(selected_location)
-    cabinet_entry.delete(0, tk.END)  # Clear cabinet_entry when location changes
-    # 当位置改变时，也应该清空描述选项，因为柜子选项会变，进而影响描述
-    description_menu['values'] = []
-    description_menu.set('')
-    description_entry.delete(0, tk.END)
-
-def on_cabinet_menu_select(event):
-    selected_cabinet = cabinet_menu.get()
-    selected_location = location_choice.get()
-    # 使用选择的 location 和 cabinet 更新 description 菜单
-    # populate_description_menu 会自动使用当前的 category_entry 和 subcategory_entry 值
-    populate_description_menu(selected_location, selected_cabinet)
-    cabinet_entry.delete(0, tk.END)
-    cabinet_entry.insert(0, selected_cabinet)
-    # 当柜子改变时，清空已选的描述，因为描述选项已更新
-    description_menu.set('') 
-    description_entry.delete(0, tk.END)
-
-def on_description_menu_select(event):
-    selected_description = description_menu.get()
-    description_entry.delete(0, tk.END)
-    description_entry.insert(0, selected_description)
-
-def on_category_subcategory_select(event):
-    selected_category = category_entry.get()
-    selected_subcategory = subcategory_entry.get()
-
-# Functions
-def update_subcategory_options(*args):
-    selected_category = category_entry.get().strip()
-    if selected_category:
-        subcategories = inventory_df[inventory_df['大类名称'] == selected_category]['小类名称'].unique()
-        subcategory_menu['menu'].delete(0, 'end')
-        for subcategory in subcategories:
-            subcategory_menu['menu'].add_command(label=subcategory, command=tk._setit(subcategory_choice, subcategory, set_subcategory_from_dropdown))
-            
-def update_subcategory_options2(*args):
-    selected_category2 = category_entry2.get().strip()
-    if selected_category2:
-        subcategories = inventory_df[inventory_df['大类名称'] == selected_category2]['小类名称'].unique()
-        subcategory_menu2['menu'].delete(0, 'end')
-        for subcategory in subcategories:
-            subcategory_menu2['menu'].add_command(label=subcategory, command=tk._setit(subcategory_choice2, subcategory, set_subcategory_from_dropdown2))
-
-def update_cabinet_options(*args):
-    selected_location = location_choice.get().strip()
-    if selected_location:
-        cabinets = inventory_df[inventory_df['存放位置'].str.startswith(selected_location)]['存放位置'].apply(lambda x: x.split('-')[1]).unique()
-        cabinet_menu['menu'].delete(0, 'end')
-        for cabinet in cabinets:
-            cabinet_menu['menu'].add_command(label=cabinet, command=tk._setit(cabinet_number, cabinet, set_cabinet_from_dropdown))
-
-def update_description_options(*args):
-    selected_location = location_choice.get().strip()
-    if selected_location:
-        descriptions = inventory_df[inventory_df['存放位置'].str.startswith(selected_location)]['存放位置'].apply(lambda x: x.split('-')[2]).unique()
-        description_menu['menu'].delete(0, 'end')
-        for description in descriptions:
-            description_menu['menu'].add_command(label=description, command=tk._setit(description_number, description, set_description_from_dropdown))
-
-def set_category_from_dropdown(*args):
-    category_entry.delete(0, tk.END)
-    category_entry.insert(0, category_choice.get())
-    update_subcategory_options()
-    # 当大类改变后，也需要更新描述菜单
-    populate_description_menu(location_choice.get(), cabinet_number.get())
-
-def set_subcategory_from_dropdown(*args):
-    subcategory_entry.delete(0, tk.END)
-    subcategory_entry.insert(0, subcategory_choice.get())
-    # 当小类改变后，也需要更新描述菜单
-    populate_description_menu(location_choice.get(), cabinet_number.get())
-    
-def set_category_from_dropdown2(*args):
-    category_entry2.delete(0, tk.END)
-    category_entry2.insert(0, category_choice2.get())
-    update_subcategory_options2()
-
-def set_subcategory_from_dropdown2(*args):
-    subcategory_entry2.delete(0, tk.END)
-    subcategory_entry2.insert(0, subcategory_choice2.get())
-
-def set_cabinet_from_dropdown(*args):
-    cabinet_entry.delete(0, tk.END)
-    cabinet_entry.insert(0, cabinet_number.get())
-    
-def set_description_from_dropdown(*args):
-    description_entry.delete(0, tk.END)
-    description_entry.insert(0, description_number.get())
-
-def set_status_from_dropdown(*args):
-    status_entry.delete(0, tk.END)
-    status_entry.insert(0, status_choice.get())
-
-def set_remark_from_dropdown(*args):
-    remark_entry.delete(0, tk.END)
-    remark_entry.insert(0, remark_choice.get())
-
-# 添加新的函数
-def set_borrower_from_dropdown(*args):
-    borrower_entry.delete(0, tk.END)
-    borrower_entry.insert(0, borrower_choice.get())
 
 # 添加新的函数
 def set_search_item_from_dropdown(*args):
@@ -476,6 +326,8 @@ def update_search_subitem_options(*args):
 
 
 def search_item_records():
+    if not refresh_database():
+        return
     item = search_item_entry.get().strip()
     subitem = search_subitem_entry.get().strip()
     
@@ -577,6 +429,8 @@ def calculate_and_display_totals():
     messagebox.showinfo("统计结果", result)
 
 def view_inventory():
+    if not refresh_database():
+        return
     inventory_window = tk.Toplevel(root)
     inventory_window.title("Inventory")
     text = tk.Text(inventory_window)
@@ -585,6 +439,8 @@ def view_inventory():
         text.insert(tk.END, f"{row['大类名称']} - {row['小类名称']}({row['备注']}): {row['数量']} 放在 {row['存放位置']}\n")
 
 def view_borrow_return():
+    if not refresh_database():
+        return
     borrow_return_window = tk.Toplevel(root)
     borrow_return_window.title("Borrow/Return Records")
     text = tk.Text(borrow_return_window)
@@ -592,122 +448,9 @@ def view_borrow_return():
     for index, row in borrow_return_df.iterrows():
         text.insert(tk.END, f"人员: {row['保管人员']}, {row['借出物品大类名称']} - {row['借出物品小类名称']}: {row['借出物品数量']} ({row['物品状态']})\n")
 
-def add_inventory_item():
-    global inventory_df
-    # 权限检查
-    if USER_PERMISSION != '管理员':
-        messagebox.showerror("权限错误", "您没有权限执行此操作。")
-        return
-    try:
-        category = category_entry.get().strip().lower()
-        subcategory = subcategory_entry.get().strip().lower()
-        quantity = int(quantity_entry.get().strip())
-        location = f"{location_choice.get().strip()}-{cabinet_number.get().strip()}-{description_entry.get().strip()}"
-        remark = remark_entry.get().strip().lower()
-        user_input_note = item_note_entry.get().strip() if item_note_entry.get().strip() else ""  # 如果用户没有输入，确保是空字符串
-
-        if quantity <= 0:
-            raise ValueError("请输入一个正数。")
-
-        # Find matching items in the database, ignoring case and including item_note
-        matching_items = inventory_df[
-            (inventory_df['大类名称'].str.lower() == category) &
-            (inventory_df['小类名称'].str.lower() == subcategory) &
-            (inventory_df['备注'].str.lower() == remark) &
-            (inventory_df['物品备注'].fillna('').str.lower() == user_input_note.lower())  # 处理数据库中的空值
-        ]
-
-        if not matching_items.empty:
-            # Update quantity of existing item when all fields match
-            inventory_df.loc[matching_items.index, '数量'] += quantity
-            # messagebox.showinfo("成功", "物品已存在，数量已更新。")
-        else:
-            # Add as new item if any field doesn't match
-            new_item_data = {
-                '大类名称': category,
-                '小类名称': subcategory,
-                '数量': quantity,
-                '存放位置': location,
-                '备注': remark,
-                '物品备注': user_input_note
-            }
-            inventory_df = pd.concat([inventory_df, pd.DataFrame([new_item_data])], ignore_index=True)
-            # messagebox.showinfo("成功", "物品不存在，物品已添加!")
-
-        # Save updated DataFrame to Excel
-        inventory_df.to_excel(inventory_db_path, index=False, engine='openpyxl')
-
-        # Re-read the updated inventory database
-        try:
-            inventory_df = pd.read_excel(inventory_db_path, engine='openpyxl')
-            # Ensure data types are consistent after reloading.
-            if '数量' in inventory_df.columns:
-                 inventory_df['数量'] = inventory_df['数量'].astype(int)
-            # Potentially update UI elements that depend on inventory_df if necessary
-            # For example, re-populating dropdowns:
-            # populate_main_category_options() # Assuming such a function exists or is needed
-            # populate_all_dropdowns_from_inventory() # A more generic function
-            messagebox.showinfo("成功", "物品已添加/更新，并且数据库已刷新。") # Updated success message
-        except Exception as e:
-            messagebox.showerror("错误", f"成功保存物品，但刷新数据库时出错: {e}")
-    except ValueError as e:
-        messagebox.showerror("Error", f"Invalid input: {e}")
-    except Exception as e:
-        messagebox.showerror("Error", f"An unexpected error occurred: {e}")
-
-def update_databases():
-    try:
-        borrower = USER_NAME
-        if not borrower:
-            messagebox.showerror("错误", "无法获取当前用户名，请重新登录。")
-            return
-        category = category_entry2.get()
-        subcategory = subcategory_entry2.get()
-        quantity = int(quantity_entry2.get())
-        status = status_entry.get()
-        remark = remark_entry2.get()
-        # 获取当前日期并格式化为YYYYMMDD格式
-        current_date = datetime.now().strftime('%Y%m%d')
-
-        if quantity <= 0:
-            raise ValueError("不要乱写负数！csn你！.")
-
-        # Update borrow/return database
-        new_borrow_entry = {
-            '借出物品大类名称': category,
-            '借出物品小类名称': subcategory,
-            '借出物品数量': quantity,
-            '保管人员': borrower,
-            '物品状态': status,
-            '备注': remark,
-            '日期': current_date  # 添加日期字段
-        }
-        global borrow_return_df
-        borrow_return_df = borrow_return_df.append(new_borrow_entry, ignore_index=True)
-        borrow_return_df.to_excel(borrow_return_db_path, index=False, engine='openpyxl')
-
-        # Update inventory database
-        inventory_index = inventory_df[(inventory_df['大类名称'] == category) & (inventory_df['小类名称'] == subcategory) & (inventory_df['备注'] == remark)].index
-
-        # if not inventory_index.empty:
-        #     if status == '借出':
-        #         inventory_df.at[inventory_index[0], '数量'] -= quantity
-        #     elif status in ['归还', '采购']:
-        #         inventory_df.at[inventory_index[0], '数量'] += quantity
-        #     elif status in ['交付', '损坏']:
-        #         inventory_df.at[inventory_index[0], '数量'] -= quantity
-
-        # 0.3.1版本，注释掉用户的其他权限，只允许用户借出自己的物品。后续将结合仓库增加更多功能
-        if not inventory_index.empty:
-            if status == '借出':
-                inventory_df.at[inventory_index[0], '数量'] -= quantity
-
-        inventory_df.to_excel(inventory_db_path, index=False, engine='openpyxl')
-        messagebox.showinfo("成功", "数据库更新成功！")
-    except ValueError as e:
-        messagebox.showerror("Error", f"Invalid input: {e}")
-
 def search_borrower_items():
+    if not refresh_database():
+        return
     borrower_name = search_entry.get()
     search_window = tk.Toplevel(root)
     search_window.title(f"Items borrowed by {borrower_name}")
@@ -765,6 +508,8 @@ def search_borrower_items():
         text.insert(tk.END, f"损坏：{damaged_items}。\n")
 
 def view_personal_records(borrower_name):
+    if not refresh_database():
+        return
     if not borrower_name:
         messagebox.showerror("错误", "请输入要查询的人员姓名")
         return
@@ -1163,7 +908,7 @@ def check_pending_requests_status_periodic():
         if 'root' in globals() and root.winfo_exists():
             root.after(300000, check_pending_requests_status_periodic) # 例如，每5分钟检查一次 (300000毫秒)
 
-global root, category_choice, subcategory_choice, location_choice, cabinet_number, description_number, status_choice, remark_choice, borrower_choice, search_item_choice, search_subitem_choice
+global root, category_choice, subcategory_choice, location_choice, cabinet_number, description_number, status_choice, remark_choice, search_item_choice, search_subitem_choice
 global category_entry, subcategory_entry, location_entry, cabinet_entry, description_entry, quantity_entry, status_entry, remark_entry, borrower_entry, search_item_entry, search_subitem_entry
 global subcategory_menu, cabinet_menu, description_menu, search_subitem_menu
 # 新增请求操作相关的UI元素
@@ -1186,7 +931,6 @@ detailed_description = tk.StringVar()
 remark_choice = tk.StringVar()
 search_item_choice = tk.StringVar()
 search_subitem_choice = tk.StringVar()
-borrower_choice = tk.StringVar()
 # 设置样式
 style = ttk.Style()
 style.configure('Title.TLabel', font=('Arial', 13, 'bold'))
@@ -1369,19 +1113,9 @@ req_description_choice.trace("w", lambda *args: set_req_description_from_dropdow
 
 
 
-# 绑定事件
-category_choice.trace("w", set_category_from_dropdown)
-subcategory_choice.trace("w", set_subcategory_from_dropdown)
-category_choice.trace("w", set_category_from_dropdown)
-subcategory_choice.trace("w", set_subcategory_from_dropdown)
-category_choice2.trace("w", set_category_from_dropdown2)
-subcategory_choice2.trace("w", set_subcategory_from_dropdown2)
-
-
 # 新增的物品查询相关的事件绑定
 search_item_choice.trace("w", lambda *args: set_search_item_from_dropdown())
 search_subitem_choice.trace("w", lambda *args: set_search_subitem_from_dropdown())
-borrower_choice.trace("w", lambda *args: set_borrower_from_dropdown())
 search_item_entry.bind("<FocusOut>", lambda event: update_search_subitem_options())
 # 为搜索按钮绑定回车键
 search_item_entry.bind("<Return>", lambda event: search_item_records())
