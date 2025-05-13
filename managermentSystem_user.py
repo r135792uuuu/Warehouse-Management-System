@@ -1052,17 +1052,45 @@ def check_pending_requests_status():
     if not user_pending_requests.empty:
         save_requests_db(requests_df) # 保存 UserNotified 的更改
 
-    # 在Tkinter主循环中重复调用此函数
-    # root.after(30000, check_pending_requests_status) # 例如每30秒检查一次
 
-# ... existing code ...
+# 逐级搜索下拉菜单添加更新函数
+def update_req_subcategory_options(*args):
+    selected_category = req_category_entry.get().strip()
+    if selected_category:
+        subcategories = inventory_df[inventory_df['大类名称'] == selected_category]['小类名称'].unique()
+        req_subcategory_menu['menu'].delete(0, 'end')
+        for subcategory in subcategories:
+            req_subcategory_menu['menu'].add_command(label=subcategory, 
+                command=tk._setit(req_subcategory_choice, subcategory, set_req_subcategory_from_dropdown))
 
-# 在程序启动时或GUI构建后，启动定时检查
-# if USER_PERMISSION == "user": # 只为普通用户启动
-#    root.after(5000, check_pending_requests_status) # 首次检查延迟5秒
+def update_req_description_options(*args):
+    selected_category = req_category_entry.get().strip()
+    selected_subcategory = req_subcategory_entry.get().strip()
+    
+    if selected_category and selected_subcategory:
+        filtered_df = inventory_df[
+            (inventory_df['大类名称'] == selected_category) & 
+            (inventory_df['小类名称'] == selected_subcategory)
+        ]
+        descriptions = filtered_df['备注'].unique()
+        req_description_menu['menu'].delete(0, 'end')
+        for description in descriptions:
+            req_description_menu['menu'].add_command(label=description, 
+                command=tk._setit(req_description_choice, description, set_req_description_from_dropdown))
 
-# 你需要在你的GUI中添加按钮来触发 request_return_item_ui, request_deliver_item_ui, request_damage_item_ui
-# 以及修改现有的借出流程调用 process_borrow_item
+def set_req_category_from_dropdown(*args):
+    req_category_entry.delete(0, tk.END)
+    req_category_entry.insert(0, req_category_choice.get())
+    update_req_subcategory_options()
+
+def set_req_subcategory_from_dropdown(*args):
+    req_subcategory_entry.delete(0, tk.END)
+    req_subcategory_entry.insert(0, req_subcategory_choice.get())
+    update_req_description_options()
+
+def set_req_description_from_dropdown(*args):
+    req_item_name_entry.delete(0, tk.END)
+    req_item_name_entry.insert(0, req_description_choice.get())
 
 # 确保有一个 save_databases() 函数
 def save_databases():
@@ -1208,96 +1236,7 @@ instructions_button.pack(pady=(5,0)) # 在用户信息下方添加一些垂直�
 notebook = ttk.Notebook(main_frame)
 notebook.pack(fill=tk.BOTH, expand=True)
 
-# === 借还管理标签页 ===
-borrow_return_frame = ttk.Frame(notebook, padding="10")
-notebook.add(borrow_return_frame, text='借还管理')
 
-# 借还管理区域
-borrow_frame = ttk.LabelFrame(borrow_return_frame, text="借还管理", padding="10")
-borrow_frame.pack(fill=tk.X, pady=(0, 10))
-
-# 第一行：借还人员
-borrower_frame = ttk.Frame(borrow_frame)
-borrower_frame.pack(fill=tk.X, pady=2)
-ttk.Label(borrower_frame, text="借还人员：", 
-        style='Header.TLabel', width=30).pack(side=tk.LEFT)
-# borrower_entry = ttk.Entry(borrower_frame, width=30)
-# borrower_entry.pack(side=tk.LEFT, padx=5)
-
-# # 添加人员下拉菜单
-# borrower_menu = ttk.OptionMenu(borrower_frame, 
-#                               borrower_choice,
-#                               "",
-#                               *sorted(borrow_return_df['保管人员'].unique()),
-#                               command=set_borrower_from_dropdown)
-# borrower_menu.pack(side=tk.LEFT, padx=5)
-user_name_display = USER_NAME if USER_NAME else "未知用户"
-ttk.Label(borrower_frame, text=user_name_display,style='Header.TLabel').pack(side=tk.LEFT, padx=5)
-
-# 第二行：借还状态
-status_frame = ttk.Frame(borrow_frame)
-status_frame.pack(fill=tk.X, pady=2)
-ttk.Label(status_frame, text="借还状态：", 
-        style='Header.TLabel', width=30).pack(side=tk.LEFT)
-status_entry = ttk.Entry(status_frame, width=30)
-status_entry.pack(side=tk.LEFT, padx=5)
-
-# Define a function to update the status_entry
-def update_status_entry(*args):
-    status_entry.delete(0, tk.END)
-    status_entry.insert(0, status_choice.get())
-
-# Bind the function to the status_choice variable
-status_choice.trace("w", update_status_entry)
-
-# status_menu = ttk.OptionMenu(status_frame, status_choice, 
-#                            "默认","借出", "归还", "交付", "采购", "损坏")
-# 增加防御，用户只保留借出。后续将和仓库借出表格对比实现更智慧的方法
-status_menu = ttk.OptionMenu(status_frame, status_choice, 
-                        "借出")
-status_menu.pack(side=tk.LEFT)
-
-# 第三行：大类别名称
-category2_frame = ttk.Frame(borrow_frame)
-category2_frame.pack(fill=tk.X, pady=2)
-ttk.Label(category2_frame, text="大类别名称：", 
-        style='Header.TLabel', width=30).pack(side=tk.LEFT)
-category_entry2 = ttk.Entry(category2_frame, width=30)
-category_entry2.pack(side=tk.LEFT, padx=5)
-category_menu2 = ttk.OptionMenu(category2_frame, category_choice2, "",
-                            *sorted(inventory_df['大类名称'].unique()))
-category_menu2.pack(side=tk.LEFT)
-
-# 第四行：子类别名称
-subcategory2_frame = ttk.Frame(borrow_frame)
-subcategory2_frame.pack(fill=tk.X, pady=2)
-ttk.Label(subcategory2_frame, text="子类别名称：", 
-        style='Header.TLabel', width=30).pack(side=tk.LEFT)
-subcategory_entry2 = ttk.Entry(subcategory2_frame, width=30)
-subcategory_entry2.pack(side=tk.LEFT, padx=5)
-subcategory_menu2 = ttk.OptionMenu(subcategory2_frame, subcategory_choice2, "")
-subcategory_menu2.pack(side=tk.LEFT)
-
-# 第五行：数量
-quantity2_frame = ttk.Frame(borrow_frame)
-quantity2_frame.pack(fill=tk.X, pady=2)
-ttk.Label(quantity2_frame, text="数量：", 
-        style='Header.TLabel', width=30).pack(side=tk.LEFT)
-quantity_entry2 = ttk.Entry(quantity2_frame, width=30)
-quantity_entry2.pack(side=tk.LEFT, padx=5)
-
-# 第六行：描述符
-remark2_frame = ttk.Frame(borrow_frame)
-remark2_frame.pack(fill=tk.X, pady=2)
-ttk.Label(remark2_frame, text="描述符（好的，坏的，旧版本，默认输入好的）：", 
-        style='Header.TLabel', width=30).pack(side=tk.LEFT)
-remark_entry2 = ttk.Entry(remark2_frame, width=30)
-remark_entry2.pack(side=tk.LEFT, padx=5)
-
-# 更新按钮
-update_button = ttk.Button(borrow_frame, text="点击更新数据库", 
-                        command=update_databases, style='Action.TButton')
-update_button.pack(pady=10)
 
 # === 查询功能标签页 ===
 search_frame = ttk.Frame(notebook, padding="10")
@@ -1380,25 +1319,36 @@ notebook.add(requests_op_tab, text='操作请求')
 request_input_frame = ttk.LabelFrame(requests_op_tab, text="请求信息")
 request_input_frame.pack(padx=10, pady=10, fill="x")
 
+# 创建StringVar变量用于下拉菜单
+req_category_choice = tk.StringVar()
+req_subcategory_choice = tk.StringVar()
+req_description_choice = tk.StringVar()
+
 ttk.Label(request_input_frame, text="物品大类:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
 req_category_entry = ttk.Entry(request_input_frame, width=30)
-req_category_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+req_category_entry.grid(row=0, column=2, padx=5, pady=5, sticky="ew")
+req_category_menu = ttk.OptionMenu(request_input_frame, req_category_choice, "", *sorted(inventory_df['大类名称'].unique()))
+req_category_menu.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
 
 ttk.Label(request_input_frame, text="物品小类:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
 req_subcategory_entry = ttk.Entry(request_input_frame, width=30)
-req_subcategory_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+req_subcategory_entry.grid(row=1, column=2, padx=5, pady=5, sticky="ew")
+req_subcategory_menu = ttk.OptionMenu(request_input_frame, req_subcategory_choice, "")
+req_subcategory_menu.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
 
 ttk.Label(request_input_frame, text="物品名称/备注:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
-req_item_name_entry = ttk.Entry(request_input_frame, width=30) # 物品的唯一标识，如序列号或详细备注
-req_item_name_entry.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
-ttk.Label(request_input_frame, text="(对应库存中的'物品备注')").grid(row=2, column=2, padx=5, pady=5, sticky="w")
-
+req_item_name_entry = ttk.Entry(request_input_frame, width=30)
+req_item_name_entry.grid(row=2, column=2, padx=5, pady=5, sticky="ew")
+req_description_menu = ttk.OptionMenu(request_input_frame, req_description_choice, "")
+req_description_menu.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
+ttk.Label(request_input_frame, text="(看你借的是好的还是坏的)").grid(row=2, column=3, padx=5, pady=5, sticky="w")
 
 ttk.Label(request_input_frame, text="数量:").grid(row=3, column=0, padx=5, pady=5, sticky="w")
 req_quantity_entry = ttk.Entry(request_input_frame, width=10)
 req_quantity_entry.grid(row=3, column=1, padx=5, pady=5, sticky="w")
 
-request_input_frame.columnconfigure(1, weight=1) # Make entry widgets expandable
+request_input_frame.columnconfigure(1, weight=1)
+request_input_frame.columnconfigure(2, weight=1)
 
 # Frame for request buttons
 request_buttons_frame = ttk.Frame(requests_op_tab)
@@ -1410,6 +1360,12 @@ ttk.Button(request_buttons_frame, text="申请交付", command=request_deliver_i
 ttk.Button(request_buttons_frame, text="申请报损", command=request_damage_item_ui).pack(side=tk.LEFT, padx=5, pady=5)
 
 # --- 结束：操作请求标签页 ---
+
+
+# 绑定事件
+req_category_choice.trace("w", lambda *args: set_req_category_from_dropdown())
+req_subcategory_choice.trace("w", lambda *args: set_req_subcategory_from_dropdown())
+req_description_choice.trace("w", lambda *args: set_req_description_from_dropdown())
 
 
 
