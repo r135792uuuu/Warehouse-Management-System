@@ -1,3 +1,37 @@
+import sys
+import os
+import runpy # 新增导入
+
+# --- PyInstaller 多进程处理 ---
+# 此代码块必须位于脚本的最顶部，尤其是在任何 Tkinter 初始化之前。
+# 它允许打包后的单个可执行文件根据命令行参数调用自身的不同部分。
+if hasattr(sys, 'frozen') and hasattr(sys, '_MEIPASS'): # 检查是否在 PyInstaller 打包环境中运行
+    if len(sys.argv) > 1:
+        # 获取可执行文件所在的目录 (通常是解压后的 _MEIPASS 临时目录)
+        # sys.executable 是主可执行文件的路径
+        # 对于 --onefile 模式，sys._MEIPASS 是解包目录
+        bundle_dir = sys._MEIPASS
+        
+        if sys.argv[1] == '--run-admin-internal':
+            # 准备运行 managermentSystem.py 的逻辑
+            # 调整 sys.argv 以匹配 managermentSystem.py 期望的格式
+            # (脚本名, 用户名, 权限, 姓名)
+            original_script_name_for_sub_process = os.path.join(bundle_dir, 'managermentSystem.py')
+            sys.argv = [original_script_name_for_sub_process] + sys.argv[2:]
+            
+            # 使用 runpy 执行 managermentSystem.py 的代码
+            # run_path 会像直接运行该 .py 文件一样执行它，包括其 if __name__ == '__main__': 块
+            runpy.run_path(os.path.join(bundle_dir, 'managermentSystem.py'), run_name='__main__')
+            sys.exit() # 子逻辑执行完毕后退出进程
+        elif sys.argv[1] == '--run-user-internal':
+            # 准备运行 managermentSystem_user.py 的逻辑
+            original_script_name_for_sub_process = os.path.join(bundle_dir, 'managermentSystem_user.py')
+            sys.argv = [original_script_name_for_sub_process] + sys.argv[2:]
+            
+            runpy.run_path(os.path.join(bundle_dir, 'managermentSystem_user.py'), run_name='__main__')
+            sys.exit() # 子逻辑执行完毕后退出进程
+# --- PyInstaller 多进程处理结束 ---
+
 import tkinter as tk
 from tkinter import messagebox
 import pandas as pd
@@ -91,34 +125,52 @@ def launch_main_application(logged_in_username, user_permission, user_name): # �
     """
     启动主仓库管理系统应用程序。
     根据用户权限决定启动哪个脚本。
+    在打包环境中，会调用自身可执行文件并传递特殊参数。
     """
     target_script_name = ""
     if user_permission == "admin":
         target_script_name = 'managermentSystem.py'
-        print(f"管理员登录，启动管理员脚本: {target_script_name}")
+        # print(f"管理员登录，准备启动管理员逻辑...") # 更新打印信息
     elif user_permission == "user":
         target_script_name = 'managermentSystem_user.py'
-        print(f"普通用户登录，启动普通用户脚本: {target_script_name}")
+        # print(f"普通用户登录，准备启动普通用户逻辑...") # 更新打印信息
     else:
         messagebox.showerror("权限错误", f"未知的用户权限: {user_permission}")
-        return # 如果权限未知，则不启动任何程序
+        return
 
-    if not target_script_name: # 再次检查，确保 target_script_name 已被设置
+    if not target_script_name:
         messagebox.showerror("启动错误", "未能根据权限确定目标应用程序脚本。")
         return
 
-    main_app_path = os.path.join(SCRIPT_DIR, target_script_name)
-    # 添加调试信息
-    cmd_list = ['python', main_app_path, logged_in_username, user_permission, user_name]
+    cmd_list = []
+    if hasattr(sys, 'frozen') and hasattr(sys, '_MEIPASS'): # 检查是否在 PyInstaller 打包环境中运行
+        executable_path = sys.executable # 这是主可执行文件 (例如 login_interface.exe)
+        if target_script_name == 'managermentSystem.py':
+            cmd_list = [executable_path, '--run-admin-internal', logged_in_username, user_permission, user_name]
+        elif target_script_name == 'managermentSystem_user.py':
+            cmd_list = [executable_path, '--run-user-internal', logged_in_username, user_permission, user_name]
+    else:
+        # 正常通过 python解释器 运行 .py 脚本 (开发环境)
+        main_app_path = os.path.join(SCRIPT_DIR, target_script_name)
+        cmd_list = ['python', main_app_path, logged_in_username, user_permission, user_name]
+
+    if not cmd_list:
+        messagebox.showerror("启动错误", "未能构建启动命令。")
+        return
+        
     print(f"DEBUG [login_interface.py]: Launching command: {cmd_list}")
-    print(f"DEBUG [login_interface.py]: Argument types: {[type(arg) for arg in cmd_list]}")
-    print(f"DEBUG [login_interface.py]: logged_in_username='{logged_in_username}', user_permission='{user_permission}', user_name='{user_name}'")
+    # print(f"DEBUG [login_interface.py]: Argument types: {[type(arg) for arg in cmd_list]}")
+    # print(f"DEBUG [login_interface.py]: logged_in_username='{logged_in_username}', user_permission='{user_permission}', user_name='{user_name}'")
 
     try:
-        # 使用 'python' 命令执行主脚本，并传递用户名和权限作为参数
-        subprocess.Popen(['python', main_app_path, logged_in_username, user_permission, user_name])
+        # 对于Windows GUI应用，可以添加creationflags来隐藏子进程的控制台窗口
+        # from subprocess import CREATE_NO_WINDOW # 需要在文件顶部导入
+        # subprocess.Popen(cmd_list, creationflags=CREATE_NO_WINDOW)
+        subprocess.Popen(cmd_list)
     except FileNotFoundError:
-        messagebox.showerror("启动错误", f"主应用程序脚本 '{target_script_name}' 未在目录 '{SCRIPT_DIR}' 中找到。")
+        # 此错误在打包后不太可能发生，因为 sys.executable 总是存在的
+        # 在 .py 模式下，如果 'python' 不在 PATH 中，可能会发生
+        messagebox.showerror("启动错误", f"无法找到执行程序: {cmd_list[0]}")
     except Exception as e:
         messagebox.showerror("启动错误", f"启动主应用程序时出错: {e}")
 
